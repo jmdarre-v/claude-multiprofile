@@ -1,6 +1,6 @@
 {
   "name": "claude-multiprofile",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Run multiple Claude Desktop and Claude Code accounts side by side on macOS, fully isolated.",
   "type": "module",
   "bin": {
