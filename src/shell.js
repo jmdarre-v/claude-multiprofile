@@ -5,14 +5,14 @@
 //     alias claude-work='CLAUDE_CONFIG_DIR="$HOME/.claude-work" claude'
 //
 // We need to add that alias to the right rc file (.zshrc, .bashrc, etc.)
-// and we need to do it idempotently so re-running `claude-profiles add`
+// and we need to do it idempotently so re-running `claude-multiprofile add`
 // doesn't pile up duplicate lines.
 //
 // Strategy: we wrap our managed lines in a delimited block:
 //
-//     # >>> claude-profiles >>>
+//     # >>> claude-multiprofile >>>
 //     ...managed lines...
-//     # <<< claude-profiles <<<
+//     # <<< claude-multiprofile <<<
 //
 // On every write we replace the contents of that block. If the user has
 // hand-edited inside the markers, we will overwrite them, but that's the
@@ -23,8 +23,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { HOME } from "./util.js";
 
-const BLOCK_START = "# >>> claude-profiles >>>";
-const BLOCK_END = "# <<< claude-profiles <<<";
+const BLOCK_START = "# >>> claude-multiprofile >>>";
+const BLOCK_END = "# <<< claude-multiprofile <<<";
 
 // ---- Detection -----------------------------------------------------------
 
@@ -117,8 +117,8 @@ export function writeAliases(shell, aliasLines) {
 
   const block = [
     BLOCK_START,
-    "# Managed by claude-profiles. Edits inside this block may be overwritten.",
-    "# Run `claude-profiles list` to see what's configured.",
+    "# Managed by claude-multiprofile. Edits inside this block may be overwritten.",
+    "# Run `claude-multiprofile list` to see what's configured.",
     "",
     ...aliasLines,
     "",

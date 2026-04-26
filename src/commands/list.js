@@ -1,4 +1,4 @@
-// `claude-profiles list` - print configured profiles in a readable format.
+// `claude-multiprofile list` - print configured profiles in a readable format.
 //
 // Pulls straight from the registry. We don't check filesystem existence
 // here; that's `status`'s job. List is for "what did I configure?".
@@ -12,7 +12,7 @@ export async function list() {
   const reg = getRegistry();
   if (reg.profiles.length === 0) {
     console.log("  No profiles configured yet.\n");
-    info(`Run ${command("claude-profiles add")} to create one.`);
+    info(`Run ${command("claude-multiprofile add")} to create one.`);
     return;
   }
 

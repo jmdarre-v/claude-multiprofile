@@ -1,10 +1,10 @@
 {
-  "name": "claude-profiles",
+  "name": "claude-multiprofile",
   "version": "0.1.0",
   "description": "Run multiple Claude Desktop and Claude Code accounts side by side on macOS, fully isolated.",
   "type": "module",
   "bin": {
-    "claude-profiles": "./bin/claude-profiles.js"
+    "claude-multiprofile": "./bin/claude-multiprofile.js"
   },
   "main": "./src/cli.js",
   "files": [
@@ -14,7 +14,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "start": "node ./bin/claude-profiles.js",
+    "start": "node ./bin/claude-multiprofile.js",
     "test": "node --test test/unit.test.js"
   },
   "engines": {
@@ -36,6 +36,6 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/jmdarre-v/claude-profiles.git"
+    "url": "https://github.com/jmdarre-v/claude-multiprofile.git"
   }
 }

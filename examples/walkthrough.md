@@ -9,7 +9,7 @@ This is a worked example showing what the wizard actually looks like end to end.
 ## Step 1: Run the wizard
 
 ```
-$ claude-profiles add
+$ claude-multiprofile add
 
 ──────────────────────────
   Add a Claude profile
@@ -174,14 +174,14 @@ The session is saved to the new config folder, so future launches
 keep you signed in.
 
 → Done.
-ℹ Run claude-profiles list to see all configured profiles.
-ℹ Run claude-profiles status for a health check.
+ℹ Run claude-multiprofile list to see all configured profiles.
+ℹ Run claude-multiprofile status for a health check.
 ```
 
 ## Step 7: Verify
 
 ```
-$ claude-profiles list
+$ claude-multiprofile list
 
 ──────────────────────────────
   Configured Claude profiles
@@ -194,11 +194,11 @@ $ claude-profiles list
     Code alias:      claude-work
     Created:         2026-04-26
 
-ℹ Registry file: ~/.config/claude-profiles/profiles.json
+ℹ Registry file: ~/.config/claude-multiprofile/profiles.json
 ```
 
 ```
-$ claude-profiles status
+$ claude-multiprofile status
 
 ──────────────────────────
   Claude profiles status
@@ -212,7 +212,7 @@ $ claude-profiles status
     ✓ Shell alias "claude-work" in ~/.zshrc
 ✓     All checks passed.
 
-ℹ Registry: ~/.config/claude-profiles/profiles.json
+ℹ Registry: ~/.config/claude-multiprofile/profiles.json
 ℹ Shell: zsh (~/.zshrc)
 ```
 

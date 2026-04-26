@@ -117,8 +117,8 @@ test("writeAliases creates a managed block when none exists, and replaces it on 
 
   // The file should still contain only one start/end pair, not stacked ones.
   const content = fs.readFileSync(rc, "utf8");
-  const startMatches = content.match(/# >>> claude-profiles >>>/g) || [];
-  const endMatches = content.match(/# <<< claude-profiles <<</g) || [];
+  const startMatches = content.match(/# >>> claude-multiprofile >>>/g) || [];
+  const endMatches = content.match(/# <<< claude-multiprofile <<</g) || [];
   assert.equal(startMatches.length, 1);
   assert.equal(endMatches.length, 1);
 });

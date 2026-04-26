@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Entry point for the `claude-profiles` command.
+// Entry point for the `claude-multiprofile` command.
 //
 // This is intentionally tiny. All the real logic lives in src/cli.js,
 // so the bin file just hands over argv and lets the CLI module take over.

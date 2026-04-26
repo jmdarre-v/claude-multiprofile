@@ -12,10 +12,10 @@ import { err } from "./util.js";
 
 const VERSION = "0.1.0";
 
-const HELP = `claude-profiles - run multiple Claude accounts side by side on macOS
+const HELP = `claude-multiprofile - run multiple Claude accounts side by side on macOS
 
 USAGE
-  claude-profiles <command> [options]
+  claude-multiprofile <command> [options]
 
 COMMANDS
   add              Create a new profile (interactive wizard)
@@ -38,7 +38,7 @@ WHAT IS A PROFILE?
   Claude Code (the terminal CLI), independently or together.
 
 LEARN MORE
-  https://github.com/jmdarre-v/claude-profiles
+  https://github.com/jmdarre-v/claude-multiprofile
 `;
 
 export async function run(argv) {

@@ -1,4 +1,4 @@
-# claude-profiles
+# claude-multiprofile
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org/)
@@ -30,7 +30,7 @@ Both work. Both are fiddly to set up and easy to mess up. This tool automates th
 ## Install
 
 ```bash
-npm install -g claude-profiles
+npm install -g claude-multiprofile
 ```
 
 Requires Node 18 or newer. macOS is required for Claude Desktop profiles. Claude Code profiles work on macOS and Linux.
@@ -38,7 +38,7 @@ Requires Node 18 or newer. macOS is required for Claude Desktop profiles. Claude
 ## Quick start
 
 ```bash
-claude-profiles add
+claude-multiprofile add
 ```
 
 The wizard walks you through every choice, explains what each step does, and lets you accept defaults if you don't care. A typical first run takes about 30 seconds.
@@ -54,7 +54,7 @@ For a profile named `work`, with both Desktop and Code targets, the tool creates
 ~/Applications/Claude WORK.app                ← Desktop launcher (drag to Dock)
 ~/.claude-work/                               ← Code config folder
 ~/.zshrc                                      ← adds: alias claude-work='...'
-~/.config/claude-profiles/profiles.json       ← registry entry
+~/.config/claude-multiprofile/profiles.json       ← registry entry
 ```
 
 Nothing about your existing default Claude install changes. Your current login, chats, MCP servers, and skills stay exactly where they are.
@@ -77,7 +77,7 @@ This means you can seed a new Code profile from your existing `~/.claude` (carry
 
 ## Commands
 
-### `claude-profiles add`
+### `claude-multiprofile add`
 
 Interactive wizard. Walks through:
 
@@ -91,19 +91,19 @@ Interactive wizard. Walks through:
 
 Then prints a plan, asks for confirmation, and applies.
 
-### `claude-profiles list`
+### `claude-multiprofile list`
 
 Prints every configured profile with its paths and creation date.
 
-### `claude-profiles status`
+### `claude-multiprofile status`
 
 Walks every profile and verifies the directories, .app, and shell aliases still exist. Useful after a machine migration or after manually editing your `.zshrc`.
 
-### `claude-profiles remove [name]`
+### `claude-multiprofile remove [name]`
 
 Tears down a profile. Removes the launcher .app, the shell alias, and the registry entry. By default the data folders are kept (so you can recover your chats if you change your mind). The wizard asks separately about deleting the data folders.
 
-### `claude-profiles help` / `--version`
+### `claude-multiprofile help` / `--version`
 
 Self-explanatory.
 
@@ -186,11 +186,11 @@ Then quit ALL Claude windows (Cmd+Q) and launch the new profile again. It'll sta
 
 **The shell alias isn't found.**
 
-Aliases live in your shell's rc file but they only get loaded when a new shell starts. Either open a new terminal tab or `source ~/.zshrc` (or whatever your shell's rc file is). Run `claude-profiles status` to confirm the alias is actually in the rc file.
+Aliases live in your shell's rc file but they only get loaded when a new shell starts. Either open a new terminal tab or `source ~/.zshrc` (or whatever your shell's rc file is). Run `claude-multiprofile status` to confirm the alias is actually in the rc file.
 
 **The launcher .app shows the AppleScript icon, not Claude's.**
 
-You answered "no" to the icon copy step, or your Claude.app install is in a non-standard location. Either re-run `claude-profiles add` (and remove the old profile first) or copy the icon manually:
+You answered "no" to the icon copy step, or your Claude.app install is in a non-standard location. Either re-run `claude-multiprofile add` (and remove the old profile first) or copy the icon manually:
 
 ```bash
 cp /Applications/Claude.app/Contents/Resources/*.icns \
@@ -201,7 +201,7 @@ touch ~/Applications/Claude\ WORK.app
 **I want to see what's in the registry.**
 
 ```bash
-cat ~/.config/claude-profiles/profiles.json
+cat ~/.config/claude-multiprofile/profiles.json
 ```
 
 It's a plain JSON file. You can inspect or hand-edit it, though running the CLI commands is safer.
@@ -214,7 +214,7 @@ The Code half works fine on Linux, the Desktop half doesn't (Claude Desktop is m
 
 | Tool | Desktop | Code | Mac | Linux | Notes |
 |------|---------|------|-----|-------|-------|
-| claude-profiles (this) | yes | yes | yes | partial | Single tool for both, interactive wizard |
+| claude-multiprofile (this) | yes | yes | yes | partial | Single tool for both, interactive wizard |
 | [aimux](https://github.com/Digital-Threads/aimux) | no | yes | yes | yes | Code only, also handles symlink-sharing |
 | [aisw](https://crates.io/crates/aisw) | no | yes | yes | yes | Rust binary, also covers Codex CLI and Gemini CLI |
 | [Jean-Claude](https://madewithlove.com/blog/running-multiple-claude-accounts-without-logging-out/) | no | yes | yes | yes | Cross-machine sync, opinionated dotfiles |
@@ -230,7 +230,7 @@ The tool reads and writes the following on your machine:
 - `~/Applications/` (creates new .app bundles only)
 - `~/.claude-{name}/` (creates new folders only)
 - `~/.zshrc`, `~/.bash_profile`, or `~/.config/fish/config.fish` (adds a delimited managed block; never touches lines outside the markers)
-- `~/.config/claude-profiles/profiles.json` (the registry)
+- `~/.config/claude-multiprofile/profiles.json` (the registry)
 
 It does not touch:
 

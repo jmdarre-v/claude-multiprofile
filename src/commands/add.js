@@ -1,4 +1,4 @@
-// `claude-profiles add` - the interactive wizard.
+// `claude-multiprofile add` - the interactive wizard.
 //
 // This is the only command most users will ever run. It walks through
 // every choice involved in setting up a new profile, explaining what's
@@ -421,6 +421,6 @@ function printNextSteps({ name, desktopResult, codeResult }) {
   }
 
   step("Done.");
-  info(`Run ${command("claude-profiles list")} to see all configured profiles.`);
-  info(`Run ${command("claude-profiles status")} for a health check.`);
+  info(`Run ${command("claude-multiprofile list")} to see all configured profiles.`);
+  info(`Run ${command("claude-multiprofile status")} for a health check.`);
 }

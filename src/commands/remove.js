@@ -1,4 +1,4 @@
-// `claude-profiles remove <name>` - tear down a profile.
+// `claude-multiprofile remove <name>` - tear down a profile.
 //
 // Removal is destructive, so we ask twice: once for the profile choice,
 // once for whether to delete the data folders. By default the data
@@ -31,7 +31,7 @@ export async function remove(args) {
     return;
   }
 
-  // Allow `claude-profiles remove work` as a shortcut.
+  // Allow `claude-multiprofile remove work` as a shortcut.
   let target = args[0];
   if (!target) {
     target = await select({
@@ -45,7 +45,7 @@ export async function remove(args) {
 
   const profile = reg.profiles.find((p) => p.name === target);
   if (!profile) {
-    warn(`Profile "${target}" not found. Run \`claude-profiles list\` to see options.`);
+    warn(`Profile "${target}" not found. Run \`claude-multiprofile list\` to see options.`);
     return;
   }
 

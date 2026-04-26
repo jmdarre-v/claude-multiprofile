@@ -19,7 +19,7 @@ import { HOME } from "./util.js";
 // adopted on macOS. We honor it if set, otherwise default to ~/.config.
 
 const CONFIG_HOME = process.env.XDG_CONFIG_HOME || path.join(HOME, ".config");
-const REGISTRY_DIR = path.join(CONFIG_HOME, "claude-profiles");
+const REGISTRY_DIR = path.join(CONFIG_HOME, "claude-multiprofile");
 const REGISTRY_PATH = path.join(REGISTRY_DIR, "profiles.json");
 
 const EMPTY_REGISTRY = {

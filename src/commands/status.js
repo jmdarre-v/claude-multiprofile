@@ -1,4 +1,4 @@
-// `claude-profiles status` - sanity-check what's configured.
+// `claude-multiprofile status` - sanity-check what's configured.
 //
 // Walks every profile in the registry and verifies that the things it
 // expects to exist actually exist on disk and in the shell config.
@@ -28,7 +28,7 @@ export async function status() {
   const reg = getRegistry();
   if (reg.profiles.length === 0) {
     info("No profiles configured.");
-    info(`Run ${command("claude-profiles add")} to create one.`);
+    info(`Run ${command("claude-multiprofile add")} to create one.`);
     return;
   }
 
@@ -80,7 +80,7 @@ export async function status() {
     } else {
       warn(`    ${issues} issue${issues > 1 ? "s" : ""} detected.`);
       info(
-        `    Re-run ${command(`claude-profiles add`)} for this profile, or fix manually.`
+        `    Re-run ${command(`claude-multiprofile add`)} for this profile, or fix manually.`
       );
     }
     console.log("");
