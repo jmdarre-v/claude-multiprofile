@@ -99,7 +99,7 @@ export async function add() {
   // ---- Phase 2: profile name -------------------------------------------
 
   const rawName = await input({
-    message: "Profile name (e.g. work, work, client-acme):",
+    message: "Profile name (e.g. work, personal-2, client-acme):",
     validate: (v) => {
       const cleaned = sanitizeName(v);
       if (!cleaned) return "Name cannot be empty.";
