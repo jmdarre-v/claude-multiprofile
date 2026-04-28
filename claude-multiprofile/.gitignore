@@ -1,7 +1,0 @@
-node_modules/
-*.log
-.DS_Store
-.env
-.idea/
-.vscode/
-package-lock.json
