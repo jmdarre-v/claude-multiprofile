@@ -4,6 +4,9 @@
 // yargs because we have four commands and no flags to speak of. A
 // 30-line switch is clearer than a framework.
 
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { add } from "./commands/add.js";
 import { list } from "./commands/list.js";
 import { remove } from "./commands/remove.js";
@@ -11,7 +14,14 @@ import { repair } from "./commands/repair.js";
 import { status } from "./commands/status.js";
 import { err } from "./util.js";
 
-const VERSION = "0.1.0";
+// Read the version from package.json at runtime so we don't have to
+// remember to keep it in sync with the manifest. The path resolves
+// relative to this file (src/cli.js), so it works regardless of where
+// the package was installed (global, local, npx, GitHub install, etc.).
+const PKG = JSON.parse(
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8")
+);
+const VERSION = PKG.version;
 
 const HELP = `claude-multiprofile - run multiple Claude accounts side by side on macOS
 
