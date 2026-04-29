@@ -5,3 +5,5 @@ node_modules/
 .idea/
 .vscode/
 package-lock.json
+.DS_Store
+*.tar.gz
