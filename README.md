@@ -29,17 +29,19 @@ Both work. Both are fiddly to set up and easy to mess up. This tool automates th
 
 ## Install
 
-### From GitHub (recommended for now)
+```bash
+npm install -g claude-multiprofile
+```
+
+To upgrade later, run `claude-multiprofile upgrade` (or re-run the install command above).
+
+### Install the latest unreleased commit
+
+If you want changes that haven't been published to npm yet:
 
 ```bash
 npm install -g github:jmdarre-v/claude-multiprofile
 ```
-
-This installs the latest commit from the `main` branch. To update, re-run the same command.
-
-### From npm
-
-Not yet published. Will be available as a scoped package (`@jmdarre-v/claude-multiprofile`) once it stabilizes.
 
 ### Requirements
 
