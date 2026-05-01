@@ -7,6 +7,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { select } from "@inquirer/prompts";
 import { add } from "./commands/add.js";
 import { extensions } from "./commands/extensions.js";
 import { list } from "./commands/list.js";
@@ -34,8 +35,8 @@ COMMANDS
   add                    Create a new profile (interactive wizard)
   list                   List configured profiles
   status                 Health-check all configured profiles
-  extensions <profile>   Copy Claude Desktop extensions from your default
-                         install into a Desktop profile (interactive)
+  extensions             Copy Claude Desktop extensions between profiles
+                         (interactive: pick source, then target)
   repair <name>          Re-register a profile launcher with macOS LaunchServices
                          (fixes Dock icons that stop responding to double-click)
   remove [name]          Remove a profile (interactive if no name given)
@@ -59,18 +60,61 @@ LEARN MORE
   https://github.com/jmdarre-v/claude-multiprofile
 `;
 
+// Interactive menu shown when the user runs `claude-multiprofile` with no
+// arguments. Each entry maps to a handler in the dispatcher below.
+async function pickCommand() {
+  console.log(`claude-multiprofile v${VERSION}`);
+  console.log("");
+  return select({
+    message: "What would you like to do?",
+    choices: [
+      { name: "add        — Create a new profile (interactive wizard)", value: "add" },
+      { name: "list       — List configured profiles", value: "list" },
+      { name: "status     — Health-check all profiles", value: "status" },
+      { name: "extensions — Copy Claude Desktop extensions between profiles", value: "extensions" },
+      { name: "repair     — Re-register a profile launcher with macOS", value: "repair" },
+      { name: "remove     — Remove a profile", value: "remove" },
+      { name: "upgrade    — Upgrade claude-multiprofile to the latest version", value: "upgrade" },
+      { name: "help       — Show full help text", value: "help" },
+      { name: "exit", value: "exit" },
+    ],
+    pageSize: 10,
+  });
+}
+
 export async function run(argv) {
-  const cmd = argv[0];
+  let cmd = argv[0];
+  let rest = argv.slice(1);
 
   // Help-style flags before unknown-command handling so users get help
   // even if they typed a half-remembered flag.
-  if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") {
+  if (cmd === "help" || cmd === "--help" || cmd === "-h") {
     console.log(HELP);
     return;
   }
   if (cmd === "version" || cmd === "--version" || cmd === "-v") {
     console.log(VERSION);
     return;
+  }
+
+  // No command? Drop into the interactive menu. Wrapped in try/catch so
+  // Ctrl+C at the menu prompt exits cleanly rather than printing a stack.
+  if (!cmd) {
+    try {
+      cmd = await pickCommand();
+    } catch (e) {
+      if (e && e.name === "ExitPromptError") {
+        console.log("");
+        return;
+      }
+      throw e;
+    }
+    if (cmd === "exit") return;
+    if (cmd === "help") {
+      console.log(HELP);
+      return;
+    }
+    rest = [];
   }
 
   const handlers = { add, list, status, extensions, repair, remove, upgrade };
@@ -83,7 +127,7 @@ export async function run(argv) {
   }
 
   try {
-    await handler(argv.slice(1));
+    await handler(rest);
   } catch (e) {
     // @inquirer/prompts throws ExitPromptError when the user hits Ctrl+C.
     // We treat that as a clean exit rather than a stack trace.

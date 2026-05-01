@@ -1,5 +1,6 @@
-// `claude-multiprofile extensions <profile>` - copy Claude Desktop extensions
-// from your default install into a Desktop profile.
+// `claude-multiprofile extensions` - copy Claude Desktop extensions from
+// one Desktop install (the default install or any registered profile)
+// into another registered Desktop profile.
 //
 // Background:
 //
@@ -21,8 +22,11 @@
 //
 // Usage:
 //
-//   claude-multiprofile extensions <profile>            # interactive
-//   claude-multiprofile extensions <profile> --force    # overwrite conflicts
+//   claude-multiprofile extensions            # fully interactive
+//   claude-multiprofile extensions --force    # overwrite conflicts
+//
+// Both source and target are picked from a menu — no profile name argument
+// to mistype.
 //
 // We do NOT install extensions during `add` time — keeping `add` focused
 // on getting a profile up and running. This is a separate command users
@@ -31,8 +35,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { checkbox, confirm } from "@inquirer/prompts";
-import { findProfile } from "../registry.js";
+import { checkbox, confirm, select } from "@inquirer/prompts";
+import { getRegistry } from "../registry.js";
 import {
   header,
   ok,
@@ -46,7 +50,7 @@ import {
   dim,
   command,
 } from "../util.js";
-import { DEFAULT_DESKTOP_DATA_DIR } from "../detect.js";
+import { DEFAULT_DESKTOP_DATA_DIR, detectDefaults } from "../detect.js";
 
 const EXT_DIR_NAME = "Claude Extensions";
 const EXT_SETTINGS_DIR_NAME = "Claude Extensions Settings";
@@ -110,48 +114,84 @@ function copyExtension(ext, targetDataDir) {
 export async function extensions(args) {
   header("Copy Claude Desktop extensions");
 
-  // Parse args. We accept `<profile> [--force]` in either order for
-  // forgiveness on flag placement.
   const force = args.includes("--force");
-  const positional = args.filter((a) => !a.startsWith("--"));
-  const name = positional[0];
 
-  if (!name) {
-    err("Profile name required.");
-    info(`Usage: ${command("claude-multiprofile extensions <profile> [--force]")}`);
-    info(`Run ${command("claude-multiprofile list")} to see configured profiles.`);
+  // ---- Build the list of available Desktop installs -----------------------
+  //
+  // Sources include the user's default install (if present) plus every
+  // registered profile that has Desktop configured. Targets are the same
+  // set minus the default install (we never write into the user's main
+  // Claude data dir — that's reserved as their baseline).
+
+  const defaults = detectDefaults();
+  const registry = getRegistry();
+  const desktopProfiles = registry.profiles.filter((p) => p.desktop);
+
+  const sourceChoices = [];
+  if (defaults.desktop) {
+    sourceChoices.push({
+      name: `default install ${dim(`(${tildify(DEFAULT_DESKTOP_DATA_DIR)})`)}`,
+      value: { label: "default install", dataDir: DEFAULT_DESKTOP_DATA_DIR, isDefault: true },
+    });
+  }
+  for (const p of desktopProfiles) {
+    sourceChoices.push({
+      name: `${p.name} ${dim(`(${tildify(p.desktop.dataDir)})`)}`,
+      value: { label: p.name, dataDir: p.desktop.dataDir, isDefault: false },
+    });
+  }
+
+  if (sourceChoices.length === 0) {
+    err("No Claude Desktop installs found.");
+    info(`Add a Desktop profile with ${command("claude-multiprofile add")}, or launch the default Claude Desktop at least once.`);
+    process.exit(1);
+  }
+  if (desktopProfiles.length === 0) {
+    err("No Desktop profiles configured to copy into.");
+    info(`Create one first with ${command("claude-multiprofile add")}.`);
     process.exit(1);
   }
 
-  // ---- Resolve target profile ---------------------------------------------
+  // ---- Pick source --------------------------------------------------------
 
-  const profile = findProfile(name);
-  if (!profile) {
-    err(`Profile "${name}" not found.`);
-    info(`Run ${command("claude-multiprofile list")} to see configured profiles.`);
+  const source = await select({
+    message: "Copy extensions FROM:",
+    choices: sourceChoices,
+  });
+
+  // Targets exclude the default install and the chosen source profile.
+  const targetChoices = desktopProfiles
+    .filter((p) => p.desktop.dataDir !== source.dataDir)
+    .map((p) => ({
+      name: `${p.name} ${dim(`(${tildify(p.desktop.dataDir)})`)}`,
+      value: { label: p.name, dataDir: p.desktop.dataDir, profile: p },
+    }));
+
+  if (targetChoices.length === 0) {
+    err("No eligible target profiles. (Need at least one Desktop profile other than the source.)");
+    info(`Create another Desktop profile with ${command("claude-multiprofile add")}.`);
     process.exit(1);
   }
 
-  if (!profile.desktop) {
-    err(`Profile "${name}" is a Code-only profile.`);
-    info("Extensions are a Claude Desktop concept; they don't apply to Code profiles.");
-    process.exit(1);
-  }
+  const target = await select({
+    message: "Copy extensions TO:",
+    choices: targetChoices,
+  });
 
-  step(`Copying extensions into "${name}"`);
-  info(`Source: ${pathStr(tildify(DEFAULT_DESKTOP_DATA_DIR))}`);
-  info(`Target: ${pathStr(tildify(profile.desktop.dataDir))}`);
+  step(`Copying extensions: ${source.label} → ${target.label}`);
+  info(`Source: ${pathStr(tildify(source.dataDir))}`);
+  info(`Target: ${pathStr(tildify(target.dataDir))}`);
 
   // ---- Inventory ----------------------------------------------------------
 
-  const sourceExts = listExtensions(DEFAULT_DESKTOP_DATA_DIR);
+  const sourceExts = listExtensions(source.dataDir);
   if (sourceExts.length === 0) {
-    warn("No extensions found in your default Claude Desktop install.");
-    info("Install extensions in your default Claude first, then re-run this command.");
+    warn(`No extensions found in ${source.label}.`);
+    info("Install extensions there first, then re-run this command.");
     return;
   }
 
-  const targetExts = listExtensions(profile.desktop.dataDir);
+  const targetExts = listExtensions(target.dataDir);
   const targetIds = new Set(targetExts.map((e) => e.id));
 
   // ---- Interactive selection ----------------------------------------------
@@ -214,7 +254,7 @@ export async function extensions(args) {
       continue;
     }
     try {
-      copyExtension(ext, profile.desktop.dataDir);
+      copyExtension(ext, target.dataDir);
       ok(`Copied ${id}${ext.hasSettings ? "" : " (no settings file)"}`);
       copied++;
     } catch (e) {
