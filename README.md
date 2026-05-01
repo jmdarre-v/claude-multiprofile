@@ -109,6 +109,28 @@ Prints every configured profile with its paths and creation date.
 
 Walks every profile and verifies the directories, .app, and shell aliases still exist. Useful after a machine migration or after manually editing your `.zshrc`.
 
+### `claude-multiprofile extensions <profile>`
+
+Copy Claude Desktop extensions from your default install into a Desktop profile, interactively.
+
+When you create a profile, it starts empty by design — none of your default install's extensions, settings, or chats follow it over. That isolation is the point. But re-installing every extension on every profile by hand is tedious. This command is the relief valve.
+
+The flow:
+
+1. Reads the extension list from your default Claude Desktop data folder (`~/Library/Application Support/Claude/Claude Extensions/`)
+2. Shows a multi-select prompt with each extension. Extensions already in the target profile are pre-deselected; new ones are pre-selected
+3. Copies the selected extension folders AND their matching settings files (`Claude Extensions Settings/<id>.json`) into the target profile
+4. If conflicts exist, asks once whether to overwrite (or use `--force` to skip the prompt)
+
+```bash
+claude-multiprofile extensions work             # interactive
+claude-multiprofile extensions work --force     # overwrite conflicts without asking
+```
+
+Restart Claude Desktop after running this for the new extensions to load.
+
+This command does not apply to Code-only profiles (extensions are a Desktop concept).
+
 ### `claude-multiprofile repair <name>`
 
 Re-registers a profile's launcher .app with macOS LaunchServices. Use this if the Dock icon stops responding to double-clicks even though the .app bundle is intact and `open path/to/Claude\ Work.app` from the terminal still works.
@@ -204,13 +226,13 @@ Then quit ALL Claude windows (Cmd+Q) and launch the new profile again. It'll sta
 
 **The launcher icon stopped responding to double-clicks but `open` from terminal still works.**
 
-This is a stale macOS LaunchServices cache. Run:
+This is a stale macOS LaunchServices cache, often combined with a stale Dock icon cache. Run:
 
 ```bash
 claude-multiprofile repair <profile-name>
 ```
 
-The command re-registers the .app with LaunchServices and refreshes the icon cache. If clicking still doesn't work after that, log out and back in to force a full LaunchServices reset.
+The command re-registers the .app with LaunchServices, refreshes the icon cache, and restarts the Dock so it picks up the new registration. The Dock will blink briefly (less than a second) and then come back. If clicking still doesn't work after that, log out and back in to force a full LaunchServices reset.
 
 **The shell alias isn't found.**
 

@@ -123,6 +123,28 @@ export async function repair(args) {
     warn("Could not touch the .app, but lsregister succeeded. The fix should still work.");
   }
 
+  // ---- Restart the Dock --------------------------------------------------
+  //
+  // Even after lsregister succeeds, the Dock keeps its own in-memory
+  // cache mapping its visible icons to specific .app references. If the
+  // user pinned the launcher to the Dock before the LaunchServices
+  // registration went stale, the pinned icon will continue to be
+  // unresponsive even though the underlying app is now fixed. Killing
+  // the Dock forces it to reload its state from disk, picking up the
+  // refreshed registration. macOS auto-restarts the Dock immediately,
+  // so the user sees a brief blink rather than a permanent absence.
+
+  info("Refreshing the Dock (it'll briefly disappear and reappear)...");
+  try {
+    execFileSync("/usr/bin/killall", ["Dock"]);
+    ok("Dock refreshed.");
+  } catch {
+    // Non-fatal. If the Dock isn't running for some reason, or killall
+    // is denied, the user can still drag the icon off the Dock and
+    // re-add it manually.
+    warn("Could not refresh the Dock. If the icon is still unresponsive, drag it off the Dock and re-add the launcher.");
+  }
+
   console.log("");
   ok(`Done. Try double-clicking ${pathStr(tildify(appPath))} now.`);
   info("If it still doesn't launch, log out and log back in to force a full LaunchServices reset.");

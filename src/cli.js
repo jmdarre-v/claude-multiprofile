@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { add } from "./commands/add.js";
+import { extensions } from "./commands/extensions.js";
 import { list } from "./commands/list.js";
 import { remove } from "./commands/remove.js";
 import { repair } from "./commands/repair.js";
@@ -29,14 +30,16 @@ USAGE
   claude-multiprofile <command> [options]
 
 COMMANDS
-  add              Create a new profile (interactive wizard)
-  list             List configured profiles
-  status           Health-check all configured profiles
-  repair <name>    Re-register a profile launcher with macOS LaunchServices
-                   (fixes Dock icons that stop responding to double-click)
-  remove [name]    Remove a profile (interactive if no name given)
-  help             Show this help
-  version          Show the installed version
+  add                    Create a new profile (interactive wizard)
+  list                   List configured profiles
+  status                 Health-check all configured profiles
+  extensions <profile>   Copy Claude Desktop extensions from your default
+                         install into a Desktop profile (interactive)
+  repair <name>          Re-register a profile launcher with macOS LaunchServices
+                         (fixes Dock icons that stop responding to double-click)
+  remove [name]          Remove a profile (interactive if no name given)
+  help                   Show this help
+  version                Show the installed version
 
 WHAT IS A PROFILE?
   A profile is an isolated Claude install that runs alongside your
@@ -68,7 +71,7 @@ export async function run(argv) {
     return;
   }
 
-  const handlers = { add, list, status, repair, remove };
+  const handlers = { add, list, status, extensions, repair, remove };
   const handler = handlers[cmd];
   if (!handler) {
     err(`Unknown command: ${cmd}`);
