@@ -13,6 +13,7 @@ import { list } from "./commands/list.js";
 import { remove } from "./commands/remove.js";
 import { repair } from "./commands/repair.js";
 import { status } from "./commands/status.js";
+import { upgrade } from "./commands/upgrade.js";
 import { err } from "./util.js";
 
 // Read the version from package.json at runtime so we don't have to
@@ -38,6 +39,7 @@ COMMANDS
   repair <name>          Re-register a profile launcher with macOS LaunchServices
                          (fixes Dock icons that stop responding to double-click)
   remove [name]          Remove a profile (interactive if no name given)
+  upgrade                Upgrade claude-multiprofile to the latest version on npm
   help                   Show this help
   version                Show the installed version
 
@@ -71,7 +73,7 @@ export async function run(argv) {
     return;
   }
 
-  const handlers = { add, list, status, extensions, repair, remove };
+  const handlers = { add, list, status, extensions, repair, remove, upgrade };
   const handler = handlers[cmd];
   if (!handler) {
     err(`Unknown command: ${cmd}`);
