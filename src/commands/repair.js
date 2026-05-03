@@ -18,7 +18,9 @@
 // command away. Running it on a healthy profile is harmless.
 
 import { execFileSync } from "node:child_process";
-import { findProfile } from "../registry.js";
+import { select } from "@inquirer/prompts";
+import { findProfile, getRegistry } from "../registry.js";
+import { setBundleId, stripQuarantine, uniqueBundleId } from "../desktop.js";
 import {
   header,
   ok,
@@ -48,13 +50,27 @@ export async function repair(args) {
   }
 
   // ---- Resolve the profile -----------------------------------------------
+  //
+  // Allow `claude-multiprofile repair work` as a shortcut, but if no name
+  // is given, prompt the user to pick one. This is what users expect when
+  // they reach `repair` from the top-level interactive menu.
 
-  const name = args[0];
+  let name = args[0];
   if (!name) {
-    err("Profile name required.");
-    info(`Usage: ${command("claude-multiprofile repair <name>")}`);
-    info(`Run ${command("claude-multiprofile list")} to see configured profiles.`);
-    process.exit(1);
+    const reg = getRegistry();
+    const desktopProfiles = reg.profiles.filter((p) => p.desktop);
+    if (desktopProfiles.length === 0) {
+      warn("No Desktop profiles configured. Nothing to repair.");
+      info(`Create one with ${command("claude-multiprofile add")}.`);
+      return;
+    }
+    name = await select({
+      message: "Which profile's launcher do you want to repair?",
+      choices: desktopProfiles.map((p) => ({
+        name: `${p.name} ${pathStr(tildify(p.desktop.appPath))}`,
+        value: p.name,
+      })),
+    });
   }
 
   const profile = findProfile(name);
@@ -83,6 +99,33 @@ export async function repair(args) {
     err(`Launcher .app not found on disk.`);
     info(`Re-run ${command(`claude-multiprofile add`)} to recreate it (use the same profile name and paths to keep your data folder).`);
     process.exit(1);
+  }
+
+  // ---- Stamp a unique CFBundleIdentifier ---------------------------------
+  //
+  // This is the single fix that resolves the "Dock icon does nothing"
+  // symptom most often. Every osacompile'd AppleScript .app inherits the
+  // default bundle ID `com.apple.ScriptEditor.id.applet`. When the user
+  // has multiple profile launchers, LaunchServices treats them as the
+  // same application and routes Dock activations unpredictably. Giving
+  // each launcher a unique reverse-DNS bundle ID eliminates the collision.
+
+  const bundleId = uniqueBundleId(name);
+  if (setBundleId(appPath, bundleId)) {
+    ok(`Set unique bundle identifier: ${bundleId}`);
+  } else {
+    warn("Could not rewrite CFBundleIdentifier in Info.plist. The repair may be incomplete.");
+  }
+
+  // ---- Strip quarantine xattr --------------------------------------------
+  //
+  // If the .app picked up a com.apple.quarantine attribute (cloud sync,
+  // AirDrop, restoring from a backup), Gatekeeper can silently refuse
+  // double-clicks while still allowing `open` from the terminal. The
+  // attribute may not be present, in which case this is a no-op.
+
+  if (stripQuarantine(appPath)) {
+    ok("Cleared quarantine attribute (if any).");
   }
 
   // ---- Verify lsregister is present --------------------------------------
@@ -147,5 +190,6 @@ export async function repair(args) {
 
   console.log("");
   ok(`Done. Try double-clicking ${pathStr(tildify(appPath))} now.`);
+  info("If you had the launcher pinned to the Dock, drag the old icon off and re-pin from Finder — pinned items reference the pre-repair LaunchServices entry.");
   info("If it still doesn't launch, log out and log back in to force a full LaunchServices reset.");
 }

@@ -123,6 +123,64 @@ export function buildLaunchAppleScript(dataDir, claudeAppPath) {
   return `do shell script "open -n -a '${safeApp}' --args --user-data-dir='${safeDir}' > /dev/null 2>&1 &"`;
 }
 
+// PlistBuddy is the standard tool for editing .plist files on macOS. Always
+// at this path, ships with the OS.
+const PLIST_BUDDY = "/usr/libexec/PlistBuddy";
+
+export function uniqueBundleId(name) {
+  // Every osacompile'd AppleScript .app inherits the default
+  // CFBundleIdentifier `com.apple.ScriptEditor.id.applet`. When the user
+  // has multiple such launchers (one per profile), LaunchServices treats
+  // them as duplicates of the same app, and Dock double-clicks can stop
+  // resolving to the right binary. Giving each launcher a unique reverse-
+  // DNS bundle identifier avoids the collision entirely.
+  //
+  // We sanitise `name` to keep it inside the [a-zA-Z0-9-] character class
+  // CFBundleIdentifier expects.
+  const safe = String(name).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || "profile";
+  return `com.claude-multiprofile.${safe}`;
+}
+
+export function setBundleId(appPath, bundleId) {
+  // PlistBuddy needs the literal Info.plist path, not the .app path.
+  const plist = path.join(appPath, "Contents", "Info.plist");
+  if (!fileExists(plist)) return false;
+  // `Set` overwrites if present, errors if not. We pipe stderr so a missing
+  // key doesn't pollute output; on error we fall back to `Add`.
+  try {
+    execFileSync(PLIST_BUDDY, ["-c", `Set :CFBundleIdentifier ${bundleId}`, plist], {
+      stdio: "pipe",
+    });
+  } catch {
+    try {
+      execFileSync(
+        PLIST_BUDDY,
+        ["-c", `Add :CFBundleIdentifier string ${bundleId}`, plist],
+        { stdio: "pipe" }
+      );
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function stripQuarantine(appPath) {
+  // Removes any com.apple.quarantine attribute applied by Gatekeeper. On a
+  // freshly osacompile'd bundle there usually isn't one, but if the user
+  // has copied the .app between machines via cloud sync or AirDrop it can
+  // attach silently. Returns true if the call succeeded; the attribute may
+  // not have been present, which is also fine.
+  try {
+    execFileSync("/usr/bin/xattr", ["-dr", "com.apple.quarantine", appPath], {
+      stdio: "pipe",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function compileApp({ name, dataDir, appPath, claudeAppPath }) {
   // We write the AppleScript to a temp file then run `osacompile` to turn
   // it into a real .app bundle. osacompile is part of macOS, no install
@@ -144,6 +202,10 @@ export function compileApp({ name, dataDir, appPath, claudeAppPath }) {
   execFileSync("/usr/bin/osacompile", ["-o", appPath, scriptPath], {
     stdio: "pipe",
   });
+
+  // Stamp a unique CFBundleIdentifier so multiple profiles don't collide
+  // in LaunchServices (see notes on uniqueBundleId).
+  setBundleId(appPath, uniqueBundleId(name));
 
   // Best-effort cleanup of the temp file.
   try {
