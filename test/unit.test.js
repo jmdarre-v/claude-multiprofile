@@ -122,3 +122,103 @@ test("writeAliases creates a managed block when none exists, and replaces it on 
   assert.equal(startMatches.length, 1);
   assert.equal(endMatches.length, 1);
 });
+
+// ---------------------------------------------------------------------------
+// code.js - safe symlink seeding
+// ---------------------------------------------------------------------------
+
+import {
+  isShareable,
+  shareableItemsIn,
+  symlinkSelected,
+} from "../src/code.js";
+
+test("isShareable: excludes auth/identity + noise, allows arbitrary user items", () => {
+  // auth / identity — always excluded (exact names and by pattern)
+  for (const n of [".claude.json", ".credentials.json", "credentials.json",
+    "auth.json", "my-token.txt", "api-secret", "server.pem", "id.key"]) {
+    assert.equal(isShareable(n), false, `expected ${n} excluded`);
+  }
+  // cache / instance noise — excluded
+  for (const n of ["statsig", "cache", "paste-cache", ".DS_Store",
+    "foo-cache.json", "usage-stats.json", "daemon-1", "run.log"]) {
+    assert.equal(isShareable(n), false, `expected ${n} excluded`);
+  }
+  // path traversal / bad names — excluded (blocklist can't be tricked)
+  for (const n of ["..", ".", "../x", "a/b", "a\\b", ""]) {
+    assert.equal(isShareable(n), false, `expected ${JSON.stringify(n)} excluded`);
+  }
+  // known-safe AND arbitrary user content — allowed (blocklist lets extras through)
+  for (const n of ["skills", "plugins", "settings.json", "commands", "agents",
+    "rules", "my-custom-dir", "notes.md"]) {
+    assert.equal(isShareable(n), true, `expected ${n} shareable`);
+  }
+});
+
+test("shareableItemsIn lists everything present except blocked items", () => {
+  const src = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-src-"));
+  fs.mkdirSync(path.join(src, "skills"));
+  fs.mkdirSync(path.join(src, "my-custom-dir")); // user's own -> shared
+  fs.writeFileSync(path.join(src, "settings.json"), "{}");
+  fs.writeFileSync(path.join(src, ".credentials.json"), "secret"); // blocked
+  fs.writeFileSync(path.join(src, ".claude.json"), "{}"); // blocked
+
+  const items = shareableItemsIn(src);
+  assert.ok(items.includes("skills"));
+  assert.ok(items.includes("my-custom-dir"));
+  assert.ok(items.includes("settings.json"));
+  assert.ok(!items.includes(".credentials.json"));
+  assert.ok(!items.includes(".claude.json"));
+});
+
+test("symlinkSelected links safe items, resolves to real target, REFUSES auth + traversal", () => {
+  const src = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-src-"));
+  const dst = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-dst-"));
+  fs.mkdirSync(path.join(src, "skills"));
+  fs.writeFileSync(path.join(src, "settings.json"), "{}");
+  fs.writeFileSync(path.join(src, ".credentials.json"), "secret");
+
+  const linked = symlinkSelected(
+    dst,
+    ["skills", "settings.json", ".credentials.json", "../escape"],
+    src
+  );
+
+  assert.deepEqual(linked.sort(), ["settings.json", "skills"]);
+  // link resolves to the real source (data genuinely shared, not copied)
+  assert.equal(fs.readlinkSync(path.join(dst, "skills")), path.join(src, "skills"));
+  assert.ok(fs.lstatSync(path.join(dst, "settings.json")).isSymbolicLink());
+  // auth file + traversal target must never appear
+  assert.ok(!fs.existsSync(path.join(dst, ".credentials.json")));
+  assert.ok(!fs.existsSync(path.join(dst, "escape")));
+});
+
+test("symlinkSelected never destroys a real (non-symlink) dir at the destination", () => {
+  const src = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-src-"));
+  const dst = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-dst-"));
+  fs.mkdirSync(path.join(src, "skills"));
+  // real dir with user data already sitting where the link would go
+  fs.mkdirSync(path.join(dst, "skills"));
+  fs.writeFileSync(path.join(dst, "skills", "keep.txt"), "important");
+
+  // Fails loud (EEXIST) rather than recursively deleting the real dir.
+  assert.throws(() => symlinkSelected(dst, ["skills"], src));
+  assert.equal(
+    fs.readFileSync(path.join(dst, "skills", "keep.txt"), "utf8"),
+    "important"
+  );
+});
+
+test("symlinkSelected re-links idempotently when dst already holds a symlink", () => {
+  const src = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-src-"));
+  const dst = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-dst-"));
+  const stale = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-stale-"));
+  fs.mkdirSync(path.join(src, "skills"));
+  // a stale symlink from a prior run points somewhere else
+  fs.symlinkSync(stale, path.join(dst, "skills"));
+
+  // re-linking must not throw and must re-point at the real source
+  const linked = symlinkSelected(dst, ["skills"], src);
+  assert.deepEqual(linked, ["skills"]);
+  assert.equal(fs.readlinkSync(path.join(dst, "skills")), path.join(src, "skills"));
+});

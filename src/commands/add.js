@@ -12,7 +12,7 @@
 //   3. Confirmation, execution, and printed next steps
 
 import path from "node:path";
-import { input, select, confirm } from "@inquirer/prompts";
+import { input, select, confirm, checkbox } from "@inquirer/prompts";
 import {
   HOME,
   ok,
@@ -42,6 +42,7 @@ import {
   defaultAliasNameFor,
   DEFAULT_CLAUDE_CONFIG_DIR,
   setupCode,
+  shareableItemsIn,
 } from "../code.js";
 import { detectShell, rcPathForShell } from "../shell.js";
 
@@ -321,25 +322,95 @@ async function askCodeQuestions(name) {
   });
 
   // Seeding decision: only offered if a default ~/.claude exists.
-  let seedFromDefault = false;
+  let seedMode = "empty";
+  let seedItems;
   if (fileExists(DEFAULT_CLAUDE_CONFIG_DIR)) {
     explain(`
-      You already have a ~/.claude config from your existing Claude Code
-      install. We can copy its contents into the new profile's folder so
-      that any skills, plugins, MCP servers, or slash commands you've set
-      up come along for the ride.
+      Your existing ~/.claude holds the skills, plugins, slash commands, and
+      settings you've set up. This new profile can either stand on its own, or
+      stay in sync with that setup.
 
-      Authentication does NOT carry over. Claude Code stores its login in
-      macOS Keychain under a key derived from CLAUDE_CONFIG_DIR, which is
-      different for the new profile. You'll sign in fresh on first launch.
+      Your login is always separate regardless of what you pick here. Claude
+      Code keys auth to CLAUDE_CONFIG_DIR, so you'll sign in fresh on this
+      profile and your main account is never touched. (Note: if you keep an
+      API key or token inside settings.json or an MCP config, sharing that
+      file also shares the key — the login itself is what's guaranteed
+      separate.)
     `);
-    seedFromDefault = await confirm({
-      message: "Copy your existing ~/.claude into the new profile? (recommended)",
-      default: true,
+
+    const kind = await select({
+      message: "What kind of Claude Code profile is this?",
+      choices: [
+        {
+          name: "Isolated — its own independent config",
+          value: "isolated",
+          description:
+            "Nothing is shared. Skills, settings, and sessions you change here never affect your main ~/.claude, and changes there never reach here. Best for a truly separate account or a sandbox.",
+        },
+        {
+          name: "Synchronized — share selected data with ~/.claude",
+          value: "synced",
+          description:
+            "Pick items to symlink. They stay live-shared with your main profile, so e.g. installing a skill or plugin in one shows up in both. Auth/identity files are never shared.",
+        },
+      ],
+      default: "isolated",
     });
+
+    if (kind === "isolated") {
+      seedMode = await select({
+        message: "Start this isolated profile from your current setup?",
+        choices: [
+          {
+            name: "Copy my current ~/.claude (skills, plugins, settings, etc.)",
+            value: "copy",
+            description:
+              "A one-time snapshot copied in now. It's fully independent afterwards — later changes to ~/.claude won't propagate. Auth is stripped from the copy.",
+          },
+          {
+            name: "Start empty",
+            value: "empty",
+            description:
+              "A blank profile. You'll add skills, plugins, and settings yourself.",
+          },
+        ],
+        default: "copy",
+      });
+    } else {
+      // Synchronized: symlink a chosen subset of safe items.
+      const available = shareableItemsIn(DEFAULT_CLAUDE_CONFIG_DIR);
+      if (available.length === 0) {
+        warn("None of the safe shareable items were found in ~/.claude. Starting empty instead.");
+        seedMode = "empty";
+      } else {
+        // Pre-check config-like items (behavior/setup you'd want shared).
+        // Leave conversation/history data (projects, sessions, transcripts,
+        // history.jsonl) unchecked by default so a "separate" profile doesn't
+        // silently inherit your whole corpus — the user can opt in per item.
+        const CHECKED_BY_DEFAULT = new Set([
+          "skills", "plugins", "agents", "commands", "rules", "hooks",
+          "settings.json", "settings.local.json", "CLAUDE.md",
+          ".omc", ".omc-config.json", ".omc-version.json", ".ponytail-active",
+        ]);
+        seedItems = await checkbox({
+          message: "Select data to keep in sync (symlinked — auth is never listed):",
+          choices: available.map((item) => ({
+            name: item,
+            value: item,
+            checked: CHECKED_BY_DEFAULT.has(item),
+          })),
+        });
+        if (seedItems.length === 0) {
+          warn("Nothing selected. Starting empty instead.");
+          seedMode = "empty";
+        } else {
+          seedMode = "symlink";
+        }
+      }
+    }
   }
 
-  return { name, configDir, aliasName, seedFromDefault };
+  return { name, configDir, aliasName, seedMode, seedItems };
 }
 
 // ===========================================================================
@@ -360,9 +431,15 @@ function printPlan({ name, desktopConfig, codeConfig }) {
     console.log("  Claude Code:");
     console.log(`    Config folder: ${pathStr(tildify(codeConfig.configDir))}`);
     console.log(`    Shell alias: ${pathStr(codeConfig.aliasName)}`);
-    console.log(
-      `    Seed from existing ~/.claude: ${codeConfig.seedFromDefault ? "yes" : "no"}\n`
-    );
+    if (codeConfig.seedMode === "copy") {
+      console.log(`    Profile: isolated, copied from ~/.claude (snapshot)\n`);
+    } else if (codeConfig.seedMode === "symlink") {
+      console.log(
+        `    Profile: synchronized with ~/.claude — ${codeConfig.seedItems.length} symlink(s) (${codeConfig.seedItems.join(", ")})\n`
+      );
+    } else {
+      console.log(`    Profile: isolated, empty\n`);
+    }
   }
 }
 

@@ -24,7 +24,7 @@ Both work. Both are fiddly to set up and easy to mess up. This tool automates th
 - Generating a real macOS `.app` launcher you can drag to the Dock
 - Copying the Claude icon onto the launcher so it's visually distinct
 - Adding a properly quoted shell alias to the right rc file (zsh, bash, fish)
-- Seeding new Code profiles from your existing `~/.claude` so plugins and MCP servers carry over (without leaking auth)
+- Seeding new Code profiles from your existing `~/.claude` — copy a snapshot, or symlink selected items so they stay in sync (never auth)
 - Tracking everything in a registry so you can list, status-check, and cleanly remove profiles
 
 ## Install
@@ -85,7 +85,14 @@ Claude Code (the terminal CLI) honors the `CLAUDE_CONFIG_DIR` environment variab
 
 Authentication is the interesting bit. Claude Code stores its OAuth token in macOS Keychain, keyed by a SHA-256 hash of the active `CLAUDE_CONFIG_DIR`. Different config dir, different keychain entry, completely separate session. You can copy a config folder around without leaking auth.
 
-This means you can seed a new Code profile from your existing `~/.claude` (carrying over skills, plugins, and MCP servers) and the new profile will still ask you to log in fresh. The wizard offers this by default.
+This means you can seed a new Code profile from your existing `~/.claude` and the new profile will still ask you to log in fresh.
+
+The wizard gives you two ways to do this:
+
+- **Isolated** (default) — a standalone config. Optionally copy a one-time snapshot of `~/.claude` into it (skills, plugins, settings), after which the two are fully independent. Or start empty.
+- **Synchronized** — pick items to **symlink** back to `~/.claude`, so they stay live-shared. Install a skill or plugin under one profile and it shows up in both.
+
+Both modes use the same **blocklist**: everything under `~/.claude` is included *except* auth/identity files (`.claude.json`, `.credentials.json`, and anything matching credential/token/secret/oauth/key/`.env` patterns) and instance-local noise (caches, logs, `statsig`, `daemon*`, `shell-snapshots`). So your own custom directories come along too, but your login can never leak. For symlink mode the exclusion is enforced both in the picker and again when the links are created; for copy mode the snapshot is pruned to the same safe set. Note that if you keep an API key inside `settings.json` or an MCP config and choose to share that file, the key travels with it — only the Keychain login is guaranteed separate.
 
 ## Commands
 
@@ -99,7 +106,7 @@ Interactive wizard. Walks through:
 4. Where to save the launcher .app (Desktop only)
 5. Whether to copy the Claude icon onto the launcher (Desktop only)
 6. The shell alias name (Code only)
-7. Whether to seed the new Code profile from your existing `~/.claude` (Code only)
+7. How to seed the new Code profile (Code only): isolated (copy a snapshot or start empty), or synchronized (symlink selected items from `~/.claude`, auth excluded)
 
 Then prints a plan, asks for confirmation, and applies.
 

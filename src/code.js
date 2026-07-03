@@ -50,6 +50,62 @@ export function defaultConfigDirFor(name) {
 // profile from an existing setup.
 export const DEFAULT_CLAUDE_CONFIG_DIR = path.join(HOME, ".claude");
 
+// Sharing model: BLOCKLIST, not allowlist. Everything under ~/.claude is
+// shareable EXCEPT auth/identity (the hard security boundary) and instance-
+// local noise (caches, logs — sharing them just causes conflicts). This lets
+// a user share their own custom dirs/files too, without us enumerating them.
+//
+// The auth exclusions are the security-critical part and are re-enforced at
+// the sink (symlinkSelected), so login can never leak no matter what is passed.
+const NEVER_SHARE_EXACT = new Set([
+  ".claude.json", // oauthAccount identity + per-project trust
+  ".credentials.json", // the login itself (Linux/Windows file form)
+  "credentials.json",
+  "auth.json",
+  // instance-local / cache / noise: sharing these causes conflicts, not value
+  "statsig", "backups", "shell-snapshots", "debug", "ide", "jobs",
+  "cache", "paste-cache", "telemetry", ".DS_Store",
+]);
+
+// Patterns for names we can't enumerate (a future .credentials-v2.json, an
+// api-token file, per-instance caches). The auth/identity patterns are the
+// security-critical ones and are matched UNBOUNDED on purpose: for that class
+// we prefer a rare false-positive (a safe file wrongly hidden from the picker)
+// over ever sharing a credential. Erring closed is the point of the boundary.
+const NEVER_SHARE_PATTERNS = [
+  // auth / identity — fail closed
+  /credential/i, /token/i, /secret/i, /password/i, /passwd/i,
+  /api[-_]?key/i, /cookie/i, /keychain/i,
+  /\.pem$/i, /\.key$/i, /\.jwt$/i, /id_(rsa|dsa|ecdsa|ed25519)/i,
+  /(^|[.-])oauth([.-]|$)/i, /(^|[.-])auth([.-]|$)/i,
+  /(^|[.-])account([.-]|$)/i, /(^|[.-])identity([.-]|$)/i,
+  /^\.env($|\.)/i,
+  // instance-local noise — not security, just avoids junk/conflicts
+  /cache/i, /-stats\.json$/i, /^daemon/i, /\.log$/i,
+];
+
+// True if `name` (a single basename from ~/.claude) is safe to share. Rejects
+// path separators and dot-segments so a crafted name can't escape the source
+// or profile dir through the symlink path.
+export function isShareable(name) {
+  if (!name || name === "." || name === "..") return false;
+  if (name.includes("/") || name.includes("\\")) return false;
+  if (NEVER_SHARE_EXACT.has(name)) return false;
+  return !NEVER_SHARE_PATTERNS.some((re) => re.test(name));
+}
+
+// The shareable entries actually present under sourceDir. Populates the
+// interactive picker — a user's own custom items show up here too.
+export function shareableItemsIn(sourceDir = DEFAULT_CLAUDE_CONFIG_DIR) {
+  let entries;
+  try {
+    entries = fs.readdirSync(sourceDir);
+  } catch {
+    return [];
+  }
+  return entries.filter(isShareable).sort();
+}
+
 export function defaultAliasNameFor(name) {
   // Human-friendly alias users will actually type.
   // We deliberately don't reuse the bare `claude` command since that's
@@ -60,17 +116,25 @@ export function defaultAliasNameFor(name) {
 
 // ---- Directory setup -----------------------------------------------------
 
-export function ensureConfigDir(configDir, { seedFromDefault } = {}) {
+// seedMode:
+//   "copy"    - cp -R ~/.claude into the new dir (point-in-time snapshot)
+//   "symlink" - symlink the selected safe items from ~/.claude (live share)
+//   "empty"   - just create an empty dir (default when there's no ~/.claude)
+export function ensureConfigDir(
+  configDir,
+  { seedMode = "empty", seedItems } = {}
+) {
   // If the directory already exists, we leave it alone. The user is
   // probably re-running the wizard after partial completion, and we do
   // not want to clobber state they may have intentionally put there.
   if (fs.existsSync(configDir)) return false;
 
-  if (seedFromDefault && fs.existsSync(DEFAULT_CLAUDE_CONFIG_DIR)) {
+  const hasDefault = fs.existsSync(DEFAULT_CLAUDE_CONFIG_DIR);
+
+  if (seedMode === "copy" && hasDefault) {
     // Copy the user's existing ~/.claude into the new dir. This carries
-    // over skills, plugins, MCP server config, slash commands, and any
-    // CLAUDE.md they have at the user level. Auth stays in Keychain so
-    // it won't follow.
+    // over skills, plugins, slash commands, and any CLAUDE.md they have at
+    // the user level. Auth stays in Keychain so it won't follow.
     //
     // We use `cp -R` rather than fs.cpSync because cp handles macOS
     // metadata (extended attrs, resource forks) more faithfully and
@@ -82,21 +146,62 @@ export function ensureConfigDir(configDir, { seedFromDefault } = {}) {
       configDir,
     ]);
 
-    // Wipe anything that looks like a credential file inside the seeded
-    // copy. Claude Code's auth lives in Keychain, not on disk, so this is
-    // mostly belt-and-suspenders for older installs and project-level
-    // .credentials.json files. Better safe than carrying over a stale
-    // token that confuses login.
+    // Copy the same safe set as symlink mode: prune anything the blocklist
+    // excludes (auth/identity + cache/instance noise) from the snapshot, so
+    // both modes honor one source of truth and a copied profile can never
+    // retain a credential, token, or key file.
+    for (const name of fs.readdirSync(configDir)) {
+      if (!isShareable(name)) {
+        fs.rmSync(path.join(configDir, name), { recursive: true, force: true });
+      }
+    }
+    // Belt-and-suspenders for legacy on-disk credential files.
     cleanCredentialsFromDir(configDir);
+  } else if (seedMode === "symlink" && hasDefault) {
+    fs.mkdirSync(configDir, { recursive: true });
+    symlinkSelected(configDir, seedItems ?? shareableItemsIn());
   } else {
     fs.mkdirSync(configDir, { recursive: true });
   }
   return true;
 }
 
+// Symlink each selected item from ~/.claude into configDir. The profile then
+// shares that live data with the root instead of holding a stale copy.
+//
+// Security boundary: every name is re-checked with isShareable(), so even if a
+// caller passes an auth file, a cache dir, or a traversal name (../x), it is
+// skipped. Auth can never be symlinked through this path.
+export function symlinkSelected(configDir, items, sourceDir = DEFAULT_CLAUDE_CONFIG_DIR) {
+  const linked = [];
+  for (const name of items ?? []) {
+    if (!isShareable(name)) {
+      warn(`Refusing to symlink "${name}" (auth/identity or unsafe name).`);
+      continue;
+    }
+    const src = path.join(sourceDir, name);
+    if (!fs.existsSync(src)) continue; // nothing to link
+    const dst = path.join(configDir, name);
+    // Only clear a prior symlink so re-linking is idempotent. Never recursively
+    // delete a real file/dir a caller may have placed here — if one exists,
+    // symlinkSync throws EEXIST and we fail loud rather than destroy data.
+    try {
+      if (fs.lstatSync(dst).isSymbolicLink()) fs.rmSync(dst);
+    } catch {
+      // dst doesn't exist — nothing to clear.
+    }
+    fs.symlinkSync(src, dst);
+    linked.push(name);
+  }
+  return linked;
+}
+
 function cleanCredentialsFromDir(dir) {
-  // Remove known credential filenames if the user had any stashed locally.
+  // Remove known credential/identity filenames from a copied profile. Auth
+  // lives in Keychain, but a copied .claude.json carries oauthAccount identity
+  // and per-project trust, and older installs may have on-disk credential files.
   const candidates = [
+    path.join(dir, ".claude.json"),
     path.join(dir, ".credentials.json"),
     path.join(dir, "credentials.json"),
     path.join(dir, "auth.json"),
@@ -136,17 +241,21 @@ export function removeAlias(aliasName) {
 
 // ---- Top-level orchestration ---------------------------------------------
 
-export function setupCode({ name, configDir, aliasName, seedFromDefault }) {
+export function setupCode({ name, configDir, aliasName, seedMode = "empty", seedItems }) {
   step(`Creating Claude Code profile "${name}"`);
 
   info(`Config folder: ${pathStr(tildify(configDir))}`);
   info(`Shell alias: ${pathStr(aliasName)}`);
 
-  const created = ensureConfigDir(configDir, { seedFromDefault });
+  const created = ensureConfigDir(configDir, { seedMode, seedItems });
   if (created) {
-    if (seedFromDefault) {
-      ok(`Config folder created and seeded from ${pathStr(tildify(DEFAULT_CLAUDE_CONFIG_DIR))}.`);
-      ok("Existing skills, plugins, and MCP config carried over. Auth did not (it lives in Keychain).");
+    if (seedMode === "copy") {
+      ok(`Config folder created and copied from ${pathStr(tildify(DEFAULT_CLAUDE_CONFIG_DIR))}.`);
+      ok("Existing skills, plugins, and settings carried over. Auth did not (login lives in Keychain).");
+    } else if (seedMode === "symlink") {
+      const linked = seedItems ?? shareableItemsIn();
+      ok(`Config folder created with ${linked.length} symlink(s) into ${pathStr(tildify(DEFAULT_CLAUDE_CONFIG_DIR))}.`);
+      ok("Linked items stay in sync with your root profile. Auth was not linked (it lives in Keychain).");
     } else {
       ok("Config folder created (empty).");
     }
