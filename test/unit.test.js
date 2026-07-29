@@ -419,3 +419,39 @@ test("writeAliases with an empty list removes the managed block entirely", async
   assert.ok(!content.includes("# <<< claude-multiprofile <<<"), "end marker gone");
   assert.equal(readManagedAliases("zsh").length, 0);
 });
+
+// ---------------------------------------------------------------------------
+// desktop.js - launcher AppleScript, including CLAUDE_CONFIG_DIR injection
+// ---------------------------------------------------------------------------
+
+import { buildLaunchAppleScript } from "../src/desktop.js";
+
+const APP = "/Applications/Claude.app";
+const DIR = "/Users/x/Library/Application Support/Claude-WORK";
+
+test("buildLaunchAppleScript: without a code config dir, no --env is emitted (upstream behaviour)", () => {
+  const s = buildLaunchAppleScript(DIR, APP);
+  assert.ok(s.includes("open -n -a '/Applications/Claude.app'"));
+  assert.ok(s.includes(`--user-data-dir='${DIR}'`));
+  assert.ok(!s.includes("--env"), "no --env when the profile has no Code target");
+});
+
+test("buildLaunchAppleScript: with a code config dir, --env precedes --args", () => {
+  const s = buildLaunchAppleScript(DIR, APP, "/Users/x/.claude-work");
+  assert.ok(s.includes("--env 'CLAUDE_CONFIG_DIR=/Users/x/.claude-work'"));
+  // `open` requires --env BEFORE --args; everything after --args goes to argv.
+  assert.ok(
+    s.indexOf("--env") < s.indexOf("--args"),
+    "--env must come before --args or open passes it to the app as an argument"
+  );
+});
+
+test("buildLaunchAppleScript: single quotes in the config dir are escaped", () => {
+  const s = buildLaunchAppleScript(DIR, APP, "/Users/o'brien/.claude-work");
+  assert.ok(s.includes("'\\''"), "apostrophe is shell-escaped, not left to break the quoting");
+});
+
+test("buildLaunchAppleScript: an empty code config dir is treated as absent", () => {
+  assert.ok(!buildLaunchAppleScript(DIR, APP, "").includes("--env"));
+  assert.ok(!buildLaunchAppleScript(DIR, APP, undefined).includes("--env"));
+});
