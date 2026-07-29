@@ -190,7 +190,17 @@ export async function add() {
   let codeResult = null;
 
   if (desktopConfig) {
-    desktopResult = setupDesktop(desktopConfig);
+    // Hand the Code config dir to the Desktop launcher so it can export
+    // CLAUDE_CONFIG_DIR. Without this, Claude Code sessions started from
+    // inside Claude Desktop fall back to ~/.claude in every profile, and
+    // CLAUDE.md / settings.json / per-project memory merge across profiles
+    // even though Desktop itself is cleanly isolated.
+    // Undefined when the profile has no Code target — the launcher then
+    // omits --env and behaves exactly as it did before.
+    desktopResult = setupDesktop({
+      ...desktopConfig,
+      codeConfigDir: codeConfig?.configDir,
+    });
   }
   if (codeConfig) {
     codeResult = setupCode(codeConfig);

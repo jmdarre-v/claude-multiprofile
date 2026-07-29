@@ -108,7 +108,7 @@ export function ensureDataDir(dataDir) {
 
 // ---- .app bundle generation ----------------------------------------
 
-export function buildLaunchAppleScript(dataDir, claudeAppPath) {
+export function buildLaunchAppleScript(dataDir, claudeAppPath, codeConfigDir) {
   // The `open -n` flag forces a new instance even when Claude is already
   // running. Without -n, macOS would route the request to the existing
   // Claude window and ignore our --user-data-dir argument entirely.
@@ -116,11 +116,34 @@ export function buildLaunchAppleScript(dataDir, claudeAppPath) {
   // The `-a` argument takes a path or app name; we pass the explicit path
   // so this works even if there are multiple Claude.app bundles around.
   //
+  // `--env CLAUDE_CONFIG_DIR=...` closes the other half of the isolation.
+  // --user-data-dir separates Claude DESKTOP state (auth, chats, settings,
+  // MCP connectors). It does NOT separate the Claude CODE sessions that
+  // Desktop spawns: those read ~/.claude in every profile, because Desktop
+  // does not set CLAUDE_CONFIG_DIR for the CLI it launches. The practical
+  // effect is that CLAUDE.md, settings.json, and per-project memory MERGE
+  // across profiles even when Desktop itself is cleanly separated — which
+  // is the failure this whole tool exists to prevent.
+  //
+  // Verified on macOS 25.5 (2026-07-29), A/B against a control launch:
+  // `open --env` sets the variable in the launched app's environment AND in
+  // the environment its child processes inherit — the exact relationship
+  // Claude.app has with the claude-code CLI. Passing it via --env rather
+  // than launching the binary directly keeps `open -n` semantics intact,
+  // which the -n comment above explains is load-bearing.
+  //
+  // codeConfigDir is optional: when the profile has no Claude Code target,
+  // omitting it leaves Desktop-spawned Claude Code on the default ~/.claude,
+  // which is the pre-existing behaviour.
+  //
   // We escape any single quotes in the paths defensively, though Library
   // and Applications paths shouldn't contain them in practice.
   const safeApp = claudeAppPath.replace(/'/g, "'\\''");
   const safeDir = dataDir.replace(/'/g, "'\\''");
-  return `do shell script "open -n -a '${safeApp}' --args --user-data-dir='${safeDir}' > /dev/null 2>&1 &"`;
+  const envFlag = codeConfigDir
+    ? `--env 'CLAUDE_CONFIG_DIR=${codeConfigDir.replace(/'/g, "'\\''")}' `
+    : "";
+  return `do shell script "open -n -a '${safeApp}' ${envFlag}--args --user-data-dir='${safeDir}' > /dev/null 2>&1 &"`;
 }
 
 // PlistBuddy is the standard tool for editing .plist files on macOS. Always
@@ -199,11 +222,11 @@ export function stripQuarantine(appPath) {
   }
 }
 
-export function compileApp({ name, dataDir, appPath, claudeAppPath }) {
+export function compileApp({ name, dataDir, appPath, claudeAppPath, codeConfigDir }) {
   // We write the AppleScript to a temp file then run `osacompile` to turn
   // it into a real .app bundle. osacompile is part of macOS, no install
   // needed.
-  const script = buildLaunchAppleScript(dataDir, claudeAppPath);
+  const script = buildLaunchAppleScript(dataDir, claudeAppPath, codeConfigDir);
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "cp-"));
   const scriptPath = path.join(tmpDir, "launcher.applescript");
   fs.writeFileSync(scriptPath, script, "utf8");
@@ -279,7 +302,7 @@ export function copyClaudeIcon(appPath, claudeAppPath) {
 
 // ---- Top-level orchestration -------------------------------------
 
-export function setupDesktop({ name, dataDir, appPath, claudeAppPath, applyIcon }) {
+export function setupDesktop({ name, dataDir, appPath, claudeAppPath, applyIcon, codeConfigDir }) {
   // Wraps the whole setup. Returns a summary the wizard can save to the
   // registry and print to the user.
   step(`Creating Claude Desktop profile "${name}"`);
@@ -287,11 +310,12 @@ export function setupDesktop({ name, dataDir, appPath, claudeAppPath, applyIcon 
   info(`Data folder: ${pathStr(tildify(dataDir))}`);
   info(`Launcher app: ${pathStr(tildify(appPath))}`);
   info(`Claude.app source: ${pathStr(claudeAppPath)}`);
+  if (codeConfigDir) info(`Code config for Desktop-spawned Claude Code: ${pathStr(tildify(codeConfigDir))}`);
 
   ensureDataDir(dataDir);
   ok("Data folder ready.");
 
-  compileApp({ name, dataDir, appPath, claudeAppPath });
+  compileApp({ name, dataDir, appPath, claudeAppPath, codeConfigDir });
   ok("Launcher .app compiled.");
 
   if (applyIcon) {
