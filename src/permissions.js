@@ -13,7 +13,7 @@
 // make every *other* profile's directories unreachable.
 //
 // We only manage the rules WE add. To avoid clobbering a user's own deny
-// rules — or leaving stale ones behind when a profile is renamed or removed —
+// rules, or leaving stale ones behind when a profile is renamed or removed,
 // we record the exact set of rules we manage in a marker key inside the same
 // settings.json, and on every resync we remove the previous managed set before
 // writing the current one.
@@ -46,7 +46,7 @@ function denyRuleForPath(absPath) {
 
 // The directories a given profile should be blocked from reading: every OTHER
 // profile's Code config dir and Desktop data dir. We deliberately do NOT deny
-// the user's default ~/.claude — that's their primary and denying it would be
+// the user's default ~/.claude, which is their primary and denying it would be
 // surprising; issue #4 is about profiles discovering *each other*.
 function managedRulesForProfile(profile, allProfiles) {
   const rules = [];
@@ -109,7 +109,7 @@ function resyncOne(profile, allProfiles) {
   if (managed.length > 0) {
     settings[MARKER_KEY] = managed;
   } else {
-    // No siblings anymore — remove our marker entirely.
+    // No siblings anymore, so remove our marker entirely.
     delete settings[MARKER_KEY];
   }
 

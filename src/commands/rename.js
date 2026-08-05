@@ -13,7 +13,7 @@
 // Renaming by hand means getting all seven right. This command does them
 // together, or not at all.
 //
-// IMPORTANT CAVEAT — Claude Code logins do not survive the move.
+// IMPORTANT CAVEAT: Claude Code logins do not survive the move.
 //
 // Claude Code stores its OAuth token in the login Keychain under a service
 // name like `Claude Code-credentials-<hash>`, where <hash> is derived from
@@ -23,7 +23,7 @@
 // guessing at Keychain entries risks destroying the WRONG account's
 // credentials. So we warn loudly and let you decide.
 //
-// Desktop profiles are unaffected — their auth lives inside the data folder
+// Desktop profiles are unaffected, since their auth lives inside the data folder
 // we're moving, so it travels with them.
 
 import fs from "node:fs";
@@ -126,7 +126,7 @@ export async function rename(args = []) {
   //
   // We only move a directory if it currently sits at the DEFAULT location for
   // the old name. If the user chose a custom path, we leave it exactly where
-  // it is — they picked it deliberately and it likely doesn't encode the name.
+  // it is, since they picked it deliberately and it likely doesn't encode the name.
 
   const plan = [];
   let newCode = profile.code ? { ...profile.code } : null;
@@ -180,7 +180,7 @@ export async function rename(args = []) {
       from the config folder path. Moving that folder changes the key, so the
       profile won't find its token and you'll run /login once more.
 
-      This tool cannot move the Keychain entry for you — the key derivation
+      This tool cannot move the Keychain entry for you. The key derivation
       isn't reproducible, and guessing risks clobbering another account's
       credentials. Your chats, skills, and MCP config all move normally; only
       the sign-in needs redoing.

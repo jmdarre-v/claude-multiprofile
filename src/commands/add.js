@@ -48,7 +48,7 @@ import { detectShell, rcPathForShell } from "../shell.js";
 
 // Directory basenames under $HOME that belong to OTHER tools in the Claude
 // ecosystem (or to Claude itself). Naming a profile `mem` would default its
-// config dir to ~/.claude-mem — which is claude-mem's data directory — and a
+// config dir to ~/.claude-mem, which is claude-mem's data directory, and a
 // later `remove` would then offer to delete it. We refuse these names outright
 // rather than asking, because there is never a good reason to claim them.
 //
@@ -128,7 +128,7 @@ export async function add() {
   // ---- Phase 2: profile name -------------------------------------------
 
   const rawName = await input({
-    message: "Profile name (e.g. work, work, client-acme):",
+    message: "Profile name (e.g. work, personal, client-acme):",
     validate: (v) => {
       const cleaned = sanitizeName(v);
       if (!cleaned) return "Name cannot be empty.";
@@ -137,7 +137,7 @@ export async function add() {
       }
       if (findProfile(cleaned)) return `Profile "${cleaned}" already exists.`;
       if (RESERVED_NAMES[cleaned]) {
-        return `"${cleaned}" is reserved — it would collide with ${RESERVED_NAMES[cleaned]}. Pick another name.`;
+        return `"${cleaned}" is reserved. It would collide with ${RESERVED_NAMES[cleaned]}. Pick another name.`;
       }
       return true;
     },
@@ -299,7 +299,7 @@ async function askDesktopQuestions(name) {
     warn(`${tildify(dataDir)} already exists and isn't managed by this tool.`);
     explain(`
       This tool will treat that folder's contents as this profile's Desktop
-      data — including when "claude-multiprofile remove" later offers to
+      data, including when "claude-multiprofile remove" later offers to
       delete it. If it belongs to something else, choose a different path.
     `);
     const claimIt = await confirm({
@@ -372,13 +372,13 @@ async function askCodeQuestions(name) {
 
   // Claiming a directory that already exists and isn't ours is how another
   // tool's data (claude-mem, a hand-rolled setup) gets adopted into a profile
-  // — and later offered up for deletion by `remove`. Make the user say yes.
+  // and later offered up for deletion by `remove`. Make the user say yes.
   if (isUnmanagedExistingDir(configDir)) {
     console.log("");
     warn(`${tildify(configDir)} already exists and isn't managed by this tool.`);
     explain(`
       Pointing a profile at an existing folder means this tool will treat its
-      contents as that profile's data — including when you later run
+      contents as that profile's data, including when you later run
       "claude-multiprofile remove", which offers to delete the folder.
 
       If this folder belongs to another tool (claude-mem, claude-profiles) or

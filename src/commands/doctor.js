@@ -1,6 +1,6 @@
 // `claude-multiprofile doctor` - diagnose the whole setup.
 //
-// `status` answers "is each profile's paperwork in order?" — it walks the
+// `status` answers "is each profile's paperwork in order?" It walks the
 // registry and checks that the files it references exist. `doctor` answers a
 // different question: "is this MACHINE in a state where profiles will behave?"
 //
@@ -133,7 +133,7 @@ function checkBrokenInstalls(t) {
     } else {
       try {
         const pkg = JSON.parse(fs.readFileSync(manifest, "utf8"));
-        ok(`${pkg.name || path.basename(dir)} ${pkg.version || ""} — install looks intact.`);
+        ok(`${pkg.name || path.basename(dir)} ${pkg.version || ""} install looks intact.`);
       } catch {
         warn(`${tildify(dir)}: package.json is unreadable or malformed.`);
         t.warnings++;
@@ -186,7 +186,7 @@ function checkProfiles(t, reg) {
   const shell = detectShell();
   const aliasNames = new Set(readManagedAliases(shell).map((a) => a.name));
 
-  // Detect two profiles pointing at the same directory — that's a genuine
+  // Detect two profiles pointing at the same directory, which is a genuine
   // conflict where each would clobber the other's state.
   const dirOwners = new Map();
 

@@ -10,7 +10,7 @@ Run multiple Claude accounts side by side on macOS. Personal and work, multiple 
 
 Works for both Claude Desktop (the GUI app) and Claude Code (the terminal CLI), independently or together.
 
-> **See it in action:** [examples/walkthrough.md](./examples/walkthrough.md) — a full session showing every prompt and output.
+> **See it in action:** [examples/walkthrough.md](./examples/walkthrough.md), a full session showing every prompt and output.
 
 > **Disclaimer.** This is an unofficial community tool. It uses public Electron flags (`--user-data-dir`) and a stable but undocumented Claude Code environment variable (`CLAUDE_CONFIG_DIR`) to keep profiles isolated. Anthropic engineers have engaged on the open feature requests for native multi-account in both apps, so the approach is well known, but it is not officially supported. If a future Claude release changes how profiles work, this tool will need to catch up.
 
@@ -117,13 +117,13 @@ Walks every profile and verifies the directories, .app, and shell aliases still 
 
 ### `claude-multiprofile doctor [--fix]`
 
-Diagnoses the machine, not just the registry. `status` asks "is each profile's paperwork in order?" — `doctor` asks "will these profiles actually behave?"
+Diagnoses the machine, not just the registry. Where `status` asks "is each profile's paperwork in order?", `doctor` asks "will these profiles actually behave?"
 
 It checks:
 
 - **Which `claude` wins on PATH**, its version, and any shadowed copies. Every profile shares one binary, so a duplicate from another Node version is a common cause of "I upgraded and nothing changed."
-- **Broken npm installs** — a package directory left with `node_modules/` but no `package.json` silently de-registers the command and lets PATH fall through to an older copy.
-- **Directory collisions** — a profile pointing at another tool's data folder (`~/.claude-mem`, `~/.claude-profiles`), or two profiles sharing one directory.
+- **Broken npm installs.** A package directory left with `node_modules/` but no `package.json` silently de-registers the command and lets PATH fall through to an older copy.
+- **Directory collisions.** A profile pointing at another tool's data folder (`~/.claude-mem`, `~/.claude-profiles`), or two profiles sharing one directory.
 - **Cross-profile read protection** drift (see [Profile isolation](#profile-isolation) below).
 
 `--fix` repairs what's safe to repair automatically (currently the deny-rule drift). Everything else is reported with the command to run.
@@ -132,15 +132,15 @@ It checks:
 
 Renames a profile and moves everything that encodes its name: the Code config folder, the shell alias, the Desktop data folder, the launcher `.app` and its bundle ID, the registry entry, and every other profile's isolation rules.
 
-Paths you chose manually are left where they are — only folders still at their default location get moved.
+Paths you chose manually are left where they are; only folders still at their default location get moved.
 
-**Renaming a Code profile signs it out.** Claude Code stores its login in the macOS Keychain under a key derived from the config folder path, so moving the folder orphans the token and you'll run `/login` once more. This tool deliberately does not try to move the Keychain entry: the key derivation isn't reproducible, and guessing risks clobbering a different account's credentials. Chats, skills, and MCP config all move normally. Desktop profiles are unaffected — their auth lives inside the folder being moved.
+**Renaming a Code profile signs it out.** Claude Code stores its login in the macOS Keychain under a key derived from the config folder path, so moving the folder orphans the token and you'll run `/login` once more. This tool deliberately does not try to move the Keychain entry: the key derivation isn't reproducible, and guessing risks clobbering a different account's credentials. Chats, skills, and MCP config all move normally. Desktop profiles are unaffected, since their auth lives inside the folder being moved.
 
 ### `claude-multiprofile extensions`
 
-Copy Claude Desktop extensions from one install into another, interactively. It prompts for the source (your default install or any profile) and then the target profile — no profile name to mistype, and cross-profile copying works in both directions.
+Copy Claude Desktop extensions from one install into another, interactively. It prompts for the source (your default install or any profile) and then the target profile. There is no profile name to mistype, and cross-profile copying works in both directions.
 
-When you create a profile, it starts empty by design — none of your default install's extensions, settings, or chats follow it over. That isolation is the point. But re-installing every extension on every profile by hand is tedious. This command is the relief valve.
+When you create a profile, it starts empty by design: none of your default install's extensions, settings, or chats follow it over. That isolation is the point. But re-installing every extension on every profile by hand is tedious. This command is the relief valve.
 
 The flow:
 
@@ -303,7 +303,7 @@ The pitch for this tool over the others: it's the only one that handles Claude D
 
 ## Profile isolation
 
-Profiles are isolated by **configuration**: each one points Claude at a different config/data directory (`CLAUDE_CONFIG_DIR` for Code, `--user-data-dir` for Desktop). That fully separates identity and storage — separate logins, chats, settings, and MCP connectors.
+Profiles are isolated by **configuration**: each one points Claude at a different config/data directory (`CLAUDE_CONFIG_DIR` for Code, `--user-data-dir` for Desktop). That fully separates identity and storage: separate logins, chats, settings, and MCP connectors.
 
 What it does **not** do on its own is restrict what a running profile can *reach* on disk. A broad filesystem search from `$HOME` could surface a sibling profile's `CLAUDE.md`, skills, or MCP config, and pull the wrong context into the conversation.
 
@@ -317,7 +317,7 @@ Since v0.1.10, Code profiles get an enforceable guard. Every profile's `settings
 }
 ```
 
-These are hard denials — they don't prompt — and Claude Code applies `Read` rules to Grep and Glob as well, so directory walks are covered too. The rules are rewritten automatically on `add`, `remove`, and `rename`, and `doctor --fix` repairs them if they drift.
+These are hard denials (they don't prompt), and Claude Code applies `Read` rules to Grep and Glob as well, so directory walks are covered too. The rules are rewritten automatically on `add`, `remove`, and `rename`, and `doctor --fix` repairs them if they drift.
 
 Two limits worth knowing:
 
@@ -328,7 +328,7 @@ Two limits worth knowing:
 
 ### Dock icons show the standard Claude icon
 
-If you customize a launcher's icon, Finder and Get Info show your custom icon — but the Dock tile of the *running* window shows Claude's standard icon.
+If you customize a launcher's icon, Finder and Get Info show your custom icon, but the Dock tile of the *running* window shows Claude's standard icon.
 
 This is structural. The launcher is a small AppleScript bundle whose whole job is to run `open -n -a Claude.app --args --user-data-dir=...` and then exit. The window you end up with belongs to Claude.app's own process, not to the launcher, so the Dock tile uses Claude's icon. Changing the launcher's icon can't affect it, because the launcher isn't the running application.
 
@@ -338,7 +338,7 @@ Giving each profile a genuinely distinct Dock icon would mean shipping a separat
 
 Profiles isolate accounts, so there's no way to move a conversation or a Desktop Project from one profile to another. Those live server-side, tied to the account that created them; this tool only ever touches local files and never talks to Claude's servers.
 
-Your **project files on disk are already shared** — profiles redirect Claude's own state, never your working directory. Any profile can open the same repository. What doesn't follow you is conversation history and account-bound Projects.
+Your **project files on disk are already shared**, since profiles redirect Claude's own state, never your working directory. Any profile can open the same repository. What doesn't follow you is conversation history and account-bound Projects.
 
 If you're switching profiles to spread usage across accounts, the workflow that works is to keep the context in the repository rather than in the chat: a `CLAUDE.md` (or a notes file) that any profile reads on start, so a fresh conversation in another account picks up where the last one left off.
 

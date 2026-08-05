@@ -159,8 +159,8 @@ export async function remove(args) {
   // cannot reliably identify (let alone delete) the entry for this specific
   // profile, and guessing risks deleting the WRONG account's credentials.
   //
-  // The orphaned entry is inert — nothing reads it once the config dir is
-  // gone — so leaving it is safe. We tell the user the clean way to avoid
+  // The orphaned entry is inert, since nothing reads it once the config dir
+  // is gone, so leaving it is safe. We tell the user the clean way to avoid
   // creating one in the first place.
   if (profile.code) {
     console.log("");

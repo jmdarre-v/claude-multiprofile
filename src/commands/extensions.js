@@ -15,7 +15,7 @@
 // one without the other leaves Claude Desktop in a confused state.
 //
 // Profiles created by this tool start empty (we never copy extensions
-// at creation time, by design — the profile is meant to be isolated).
+// at creation time, by design, since the profile is meant to be isolated).
 // But "isolated" doesn't have to mean "barren forever". Re-installing
 // every extension by hand on every profile is the friction this command
 // removes.
@@ -25,10 +25,10 @@
 //   claude-multiprofile extensions            # fully interactive
 //   claude-multiprofile extensions --force    # overwrite conflicts
 //
-// Both source and target are picked from a menu — no profile name argument
+// Both source and target are picked from a menu, so there is no profile name argument
 // to mistype.
 //
-// We do NOT install extensions during `add` time — keeping `add` focused
+// We do NOT install extensions during `add` time, keeping `add` focused
 // on getting a profile up and running. This is a separate command users
 // run when they want it.
 
@@ -121,7 +121,7 @@ export async function extensions(args) {
   // Sources include the user's default install (if present) plus every
   // registered profile that has Desktop configured. Targets are the same
   // set minus the default install (we never write into the user's main
-  // Claude data dir — that's reserved as their baseline).
+  // Claude data dir, which is reserved as their baseline).
 
   const defaults = detectDefaults();
   const registry = getRegistry();

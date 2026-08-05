@@ -2,7 +2,7 @@
 //
 // Upgrades the globally installed claude-multiprofile package to the latest
 // version published on npm. We delegate to npm itself rather than reinventing
-// the install — npm already knows about the user's global prefix, permissions,
+// the install, since npm already knows the user's global prefix, permissions,
 // and registry config.
 //
 // We do this for the convenience of users who installed via `npm i -g` and

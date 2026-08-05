@@ -66,7 +66,7 @@ export async function status() {
       for (const p of bin.shadowed) console.log(`        ${dim(tildify(p))}`);
     }
   } else {
-    console.log("    ✗ Not found on PATH — Claude Code profiles won't launch.");
+    console.log("    ✗ Not found on PATH. Claude Code profiles won't launch.");
   }
   console.log("");
 

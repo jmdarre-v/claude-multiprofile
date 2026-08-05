@@ -190,6 +190,6 @@ export async function repair(args) {
 
   console.log("");
   ok(`Done. Try double-clicking ${pathStr(tildify(appPath))} now.`);
-  info("If you had the launcher pinned to the Dock, drag the old icon off and re-pin from Finder — pinned items reference the pre-repair LaunchServices entry.");
+  info("If you had the launcher pinned to the Dock, drag the old icon off and re-pin from Finder. Pinned items reference the pre-repair LaunchServices entry.");
   info("If it still doesn't launch, log out and log back in to force a full LaunchServices reset.");
 }

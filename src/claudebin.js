@@ -1,7 +1,7 @@
 // Resolve the `claude` binary the same way the user's shell would.
 //
 // This tool deliberately shares ONE system-wide `claude` (and one Claude
-// Desktop) across every profile — isolation is by config/data dir, not by
+// Desktop) across every profile. Isolation is by config/data dir, not by
 // duplicating the binary. That design has a sharp edge: if the user has more
 // than one `claude` on their PATH (multiple Node versions via nvm, a Homebrew
 // copy shadowing an npm copy, a half-removed global install), the one that
