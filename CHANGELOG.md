@@ -3,6 +3,26 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## 0.1.12 (2026-08-05)
+
+### Fixed
+
+- Claude Code sessions spawned from inside Claude Desktop no longer fall back
+  to the shared `~/.claude`. Desktop launchers for profiles that also have a
+  Code target now pass `--env 'CLAUDE_CONFIG_DIR=...'`, so `CLAUDE.md`,
+  `settings.json`, and per-project memory stay inside the profile instead of
+  merging across profiles that looked isolated. Thanks to
+  [@teloscientist-hub](https://github.com/teloscientist-hub) for the
+  diagnosis and the fix ([#5](https://github.com/jmdarre-v/claude-multiprofile/pull/5)).
+- `rename` passes the renamed config directory through when it rebuilds a
+  launcher, so renaming a Desktop plus Code profile no longer drops that
+  isolation.
+
+### Note
+
+Existing launchers keep their old launch line. Re-run `add` for the profile,
+or `rename` it, to regenerate one that sets the variable.
+
 ## 0.1.11 (2026-08-05)
 
 Hardening release: three bug fixes found in an internal audit, plus
