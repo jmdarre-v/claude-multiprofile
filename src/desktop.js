@@ -136,19 +136,79 @@ export function buildLaunchAppleScript(dataDir, claudeAppPath, codeConfigDir) {
   // omitting it leaves Desktop-spawned Claude Code on the default ~/.claude,
   // which is the pre-existing behaviour.
   //
-  // We escape any single quotes in the paths defensively, though Library
-  // and Applications paths shouldn't contain them in practice.
-  const safeApp = claudeAppPath.replace(/'/g, "'\\''");
-  const safeDir = dataDir.replace(/'/g, "'\\''");
-  const envFlag = codeConfigDir
-    ? `--env 'CLAUDE_CONFIG_DIR=${codeConfigDir.replace(/'/g, "'\\''")}' `
-    : "";
-  return `do shell script "open -n -a '${safeApp}' ${envFlag}--args --user-data-dir='${safeDir}' > /dev/null 2>&1 &"`;
+  // Paths cross TWO quoting layers here and both have to be honoured:
+  //
+  //   1. the shell command, where each path sits inside single quotes
+  //   2. the AppleScript string literal that `do shell script` takes
+  //
+  // Escaping only for the shell is what the code used to do, and it breaks on
+  // an apostrophe: the POSIX escape is '\'' , and that backslash lands inside
+  // an AppleScript double-quoted string where \' is not a valid escape, so
+  // osacompile refuses the script outright. A user named o'brien has an
+  // apostrophe in $HOME and therefore in every default path we generate, so
+  // this is reachable rather than theoretical.
+  const cmd =
+    `open -n -a ${shellQuote(claudeAppPath)} ` +
+    (codeConfigDir ? `--env ${shellQuote(`CLAUDE_CONFIG_DIR=${codeConfigDir}`)} ` : "") +
+    `--args --user-data-dir=${shellQuote(dataDir)} > /dev/null 2>&1 &`;
+  return `do shell script ${appleScriptString(cmd)}`;
+}
+
+// Wrap a value in shell single quotes, escaping embedded apostrophes the POSIX
+// way (close quote, escaped quote, reopen).
+function shellQuote(s) {
+  return `'${String(s).replace(/'/g, `'\\''`)}'`;
+}
+
+// Render a value as an AppleScript string literal. AppleScript escapes only
+// backslash and double quote; everything else, apostrophes included, is
+// literal once the backslashes are doubled.
+function appleScriptString(s) {
+  return `"${String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
 // PlistBuddy is the standard tool for editing .plist files on macOS. Always
 // at this path, ships with the OS.
 const PLIST_BUDDY = "/usr/libexec/PlistBuddy";
+
+// ---- Reading back an existing launcher -------------------------------------
+//
+// A launcher built before v0.1.12 has no `--env CLAUDE_CONFIG_DIR=...` in its
+// launch line, so Claude Code sessions spawned from that Desktop instance fall
+// back to the shared ~/.claude. The bundle is the only record of what a
+// launcher actually does (the registry never stored it), so `doctor` reads the
+// compiled script back rather than inferring from the profile's age.
+
+export function readLauncherScript(appPath) {
+  // osacompile stores the compiled script here; osadecompile turns it back
+  // into source. Both ship with macOS.
+  const scpt = path.join(appPath, "Contents", "Resources", "Scripts", "main.scpt");
+  if (!fileExists(scpt)) return null;
+  try {
+    return execFileSync("/usr/bin/osadecompile", [scpt], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch {
+    return null;
+  }
+}
+
+// The CLAUDE_CONFIG_DIR a launcher currently exports, or null if it exports
+// none. Returns undefined when the script can't be read at all, so callers can
+// tell "no env flag" apart from "couldn't look".
+export function launcherCodeConfigDir(appPath) {
+  const src = readLauncherScript(appPath);
+  if (src === null) return undefined;
+  // Our generated line always places --env immediately before --args.
+  const m = src.match(/--env 'CLAUDE_CONFIG_DIR=(.*?)' --args/);
+  if (!m) return null;
+  // Undo the two escaping layers in the order they were applied, outermost
+  // first: the decompiled text is AppleScript source (so backslashes are
+  // doubled), and inside it the path is shell single-quote escaped.
+  const unAppleScript = m[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+  return unAppleScript.replace(/'\\''/g, "'");
+}
 
 export function uniqueBundleId(name) {
   // Every osacompile'd AppleScript .app inherits the default

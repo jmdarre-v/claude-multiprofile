@@ -3,6 +3,28 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## 0.1.14 (2026-08-05)
+
+### Added
+
+- `doctor` reads each launcher's compiled script and reports profiles whose
+  launcher does not export `CLAUDE_CONFIG_DIR` while the profile has a Code
+  target. Those are launchers built before 0.1.12, where Claude Code started
+  from inside Desktop silently uses the shared `~/.claude`. A launcher
+  pointing at a stale directory is reported too. `doctor --fix` rebuilds them,
+  reapplying the icon and bundle ID and re-registering with LaunchServices.
+  This makes the 0.1.12 fix retroactive instead of requiring users to re-run
+  `add` for every existing profile.
+
+### Fixed
+
+- Launcher generation escaped paths for the shell but not for the AppleScript
+  string literal wrapping the command. The POSIX escape for an apostrophe
+  contains a backslash, and `\'` is not a valid AppleScript escape, so
+  `osacompile` rejected the script and profile creation failed outright. Any
+  user whose home directory contains an apostrophe hit this on every `add`
+  with a default path. Both layers are now escaped.
+
 ## 0.1.13 (2026-08-05)
 
 ### Fixed

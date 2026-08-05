@@ -452,6 +452,62 @@ test("planRenamePaths: default-located paths move, custom paths stay", async () 
 });
 
 // ---------------------------------------------------------------------------
+// desktop.js - reading CLAUDE_CONFIG_DIR back out of a compiled launcher
+// ---------------------------------------------------------------------------
+//
+// doctor uses this to find launchers built before v0.1.12, which do not export
+// CLAUDE_CONFIG_DIR and so leak Desktop-spawned Claude Code sessions into the
+// shared ~/.claude. We compile real bundles here rather than stub the parser,
+// because the round trip through osacompile/osadecompile is the part that can
+// actually break.
+
+test("launcherCodeConfigDir: reads the env back out of a real compiled launcher", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("osacompile is macOS only");
+    return;
+  }
+  const { compileApp, launcherCodeConfigDir } = await import("../src/desktop.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-launcher-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const claudeApp = "/Applications/Claude.app"; // path is only embedded, not resolved
+  const dataDir = path.join(root, "data");
+
+  // Pre-v0.1.12 shape: no Code target, so no --env at all.
+  const noEnv = path.join(root, "NoEnv.app");
+  compileApp({ name: "noenv", dataDir, appPath: noEnv, claudeAppPath: claudeApp });
+  assert.equal(launcherCodeConfigDir(noEnv), null, "no --env reads as null");
+
+  // Current shape: the config dir round-trips exactly.
+  const withEnv = path.join(root, "WithEnv.app");
+  const cfg = path.join(root, ".claude-work");
+  compileApp({
+    name: "withenv",
+    dataDir,
+    appPath: withEnv,
+    claudeAppPath: claudeApp,
+    codeConfigDir: cfg,
+  });
+  assert.equal(launcherCodeConfigDir(withEnv), cfg, "config dir round-trips");
+
+  // An apostrophe in the path is shell-escaped on the way in and must come
+  // back out unescaped, not mangled.
+  const quoted = path.join(root, "Quoted.app");
+  const oddCfg = path.join(root, "o'brien-config");
+  compileApp({
+    name: "quoted",
+    dataDir,
+    appPath: quoted,
+    claudeAppPath: claudeApp,
+    codeConfigDir: oddCfg,
+  });
+  assert.equal(launcherCodeConfigDir(quoted), oddCfg, "apostrophe survives the round trip");
+
+  // Not a bundle at all.
+  assert.equal(launcherCodeConfigDir(path.join(root, "missing.app")), undefined);
+});
+
+// ---------------------------------------------------------------------------
 // claudebin.js - which output parsing
 // ---------------------------------------------------------------------------
 
@@ -515,9 +571,16 @@ test("buildLaunchAppleScript: with a code config dir, --env precedes --args", ()
   );
 });
 
-test("buildLaunchAppleScript: single quotes in the config dir are escaped", () => {
+test("buildLaunchAppleScript: single quotes in the config dir are escaped for both layers", () => {
   const s = buildLaunchAppleScript(DIR, APP, "/Users/o'brien/.claude-work");
-  assert.ok(s.includes("'\\''"), "apostrophe is shell-escaped, not left to break the quoting");
+  // The path crosses two quoting layers: POSIX shell single quotes, and the
+  // AppleScript string literal wrapping the whole command. The shell escape
+  // is '\'' , and its backslash must itself be doubled for AppleScript or
+  // osacompile rejects \' as an unknown escape. So the source carries '\\'' .
+  // (The end-to-end proof that this compiles and reads back is the
+  // launcherCodeConfigDir round-trip test above.)
+  assert.ok(s.includes("'\\\\''"), "apostrophe is escaped for the shell AND for AppleScript");
+  assert.ok(!/[^\\]\\'/.test(s), "no bare \\' , which osacompile rejects");
 });
 
 test("buildLaunchAppleScript: an empty code config dir is treated as absent", () => {

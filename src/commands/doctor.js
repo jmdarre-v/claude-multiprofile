@@ -29,8 +29,12 @@ import {
   getBundleId,
   setBundleId,
   uniqueBundleId,
+  launcherCodeConfigDir,
+  compileApp,
+  copyClaudeIcon,
   DEFAULT_APPLET_BUNDLE_ID,
 } from "../desktop.js";
+import { DEFAULT_CLAUDE_CONFIG_DIR } from "../code.js";
 import { resyncDenyRules, auditDenyRules } from "../permissions.js";
 import { detectShell, rcPathForShell, readManagedAliases } from "../shell.js";
 import {
@@ -303,6 +307,90 @@ function checkLauncherBundleIds(t, reg, fix) {
   }
 }
 
+// ---- Check: launchers export CLAUDE_CONFIG_DIR ------------------------------
+//
+// v0.1.12 started passing `--env CLAUDE_CONFIG_DIR=...` in the launch line so
+// Claude Code sessions spawned from inside Desktop stay in the profile instead
+// of falling back to the shared ~/.claude. Launchers built before that keep
+// their old line, and the symptom is invisible: Desktop is isolated, the
+// launcher works, and only the CLI half quietly merges. This finds them.
+//
+// Only profiles with BOTH a Desktop launcher and a Code target need the flag.
+
+function checkLauncherEnv(t, reg, fix) {
+  if (!isMac()) return;
+  const candidates = reg.profiles.filter(
+    (p) =>
+      p.desktop &&
+      p.desktop.appPath &&
+      fileExists(p.desktop.appPath) &&
+      p.code &&
+      p.code.configDir
+  );
+  if (candidates.length === 0) return;
+
+  step("Desktop-spawned Claude Code");
+
+  for (const p of candidates) {
+    const current = launcherCodeConfigDir(p.desktop.appPath);
+    const expected = p.code.configDir;
+
+    if (current === undefined) {
+      warn(`${p.name}: could not read the launcher's script.`);
+      t.warnings++;
+      continue;
+    }
+    if (current === expected) {
+      ok(`${p.name}: launcher exports ${dim(tildify(expected))}`);
+      continue;
+    }
+
+    if (current === null) {
+      warn(`${p.name}: launcher does not set CLAUDE_CONFIG_DIR.`);
+      info("  Claude Code started from inside this Desktop profile will use the");
+      info(`  shared ${tildify(DEFAULT_CLAUDE_CONFIG_DIR)} instead of the profile's own config.`);
+    } else {
+      warn(`${p.name}: launcher exports a stale config dir.`);
+      info(`  Launcher says: ${tildify(current)}`);
+      info(`  Profile wants: ${tildify(expected)}`);
+    }
+
+    if (!fix) {
+      info(`  Repair with ${command("claude-multiprofile doctor --fix")}`);
+      t.warnings++;
+      continue;
+    }
+
+    // Rebuilding replaces the bundle, so the icon and bundle ID have to be
+    // reapplied and LaunchServices re-informed, same as `rename` does.
+    if (!fileExists(p.desktop.claudeAppPath)) {
+      err(`  Cannot rebuild: Claude.app not found at ${p.desktop.claudeAppPath}`);
+      t.problems++;
+      continue;
+    }
+    try {
+      compileApp({
+        name: p.name,
+        dataDir: p.desktop.dataDir,
+        appPath: p.desktop.appPath,
+        claudeAppPath: p.desktop.claudeAppPath,
+        codeConfigDir: expected,
+      });
+      copyClaudeIcon(p.desktop.appPath, p.desktop.claudeAppPath);
+      try {
+        execFileSync(LSREGISTER, ["-f", p.desktop.appPath], { stdio: "pipe" });
+      } catch {
+        // Non-fatal: the rebuilt bundle still works, registration catches up.
+      }
+      ok(`  Repaired: launcher rebuilt and now exports ${tildify(expected)}`);
+    } catch (e) {
+      err(`  Could not rebuild the launcher: ${e.message}`);
+      info(`  Recreate it with ${command("claude-multiprofile add")} using the same name and paths.`);
+      t.problems++;
+    }
+  }
+}
+
 // ---- Check: cross-profile read protection (issue #4) -----------------------
 
 function checkDenyRules(t, reg, fix) {
@@ -385,6 +473,7 @@ export async function doctor(args = []) {
   checkOwnVersion(t, currentVersion);
   checkProfiles(t, reg);
   checkLauncherBundleIds(t, reg, fix);
+  checkLauncherEnv(t, reg, fix);
   checkDenyRules(t, reg, fix);
 
   // ---- Summary -------------------------------------------------------------
