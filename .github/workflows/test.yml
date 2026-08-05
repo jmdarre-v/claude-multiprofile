@@ -1,0 +1,33 @@
+name: test
+
+# Runs the unit suite on every push and pull request. The tests are pure
+# logic (name sanitising, alias construction, managed-block round-tripping,
+# deny-rule resync) and use a sandboxed HOME, so they do not need a macOS
+# runner even though the tool itself targets macOS.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # package.json declares engines.node >= 18, so we verify the floor
+        # and the two current LTS lines above it.
+        node: ["18", "20", "22"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Run tests
+        run: npm test
