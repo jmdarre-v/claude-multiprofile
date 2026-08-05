@@ -1,5 +1,7 @@
 # claude-multiprofile
 
+[![test](https://github.com/jmdarre-v/claude-multiprofile/actions/workflows/test.yml/badge.svg)](https://github.com/jmdarre-v/claude-multiprofile/actions/workflows/test.yml)
+[![npm](https://img.shields.io/npm/v/claude-multiprofile)](https://www.npmjs.com/package/claude-multiprofile)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org/)
 [![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)](https://www.apple.com/macos/)
