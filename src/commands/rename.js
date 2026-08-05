@@ -266,11 +266,16 @@ export async function rename(args = []) {
     }
 
     try {
+      // Pass the (possibly renamed) Code config dir through so the rebuilt
+      // launcher keeps exporting CLAUDE_CONFIG_DIR. Omitting it here would
+      // silently drop the --env flag on rename, putting Desktop-spawned
+      // Claude Code back on the shared ~/.claude.
       compileApp({
         name: newName,
         dataDir: newDesktop.dataDir,
         appPath: newDesktop.appPath,
         claudeAppPath: profile.desktop.claudeAppPath,
+        codeConfigDir: newCode ? newCode.configDir : undefined,
       });
       copyClaudeIcon(newDesktop.appPath, profile.desktop.claudeAppPath);
       ok(`Rebuilt launcher at ${pathStr(tildify(newDesktop.appPath))}.`);
