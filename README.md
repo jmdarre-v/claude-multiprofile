@@ -96,7 +96,7 @@ This means you can seed a new Code profile from your existing `~/.claude` (carry
 Interactive wizard. Walks through:
 
 1. Whether to set up Desktop, Code, or both
-2. The profile name (e.g. `work`, `work`, `client-acme`)
+2. The profile name (e.g. `work`, `personal`, `client-acme`)
 3. Where the data/config folders should live
 4. Where to save the launcher .app (Desktop only)
 5. Whether to copy the Claude icon onto the launcher (Desktop only)
@@ -105,13 +105,15 @@ Interactive wizard. Walks through:
 
 Then prints a plan, asks for confirmation, and applies.
 
+The wizard refuses to claim a directory that belongs to something else. The names `mem`, `profiles`, `multiprofile`, `code`, and `desktop` are reserved outright, since each would collide with another tool's folder or this tool's own config. Beyond that, if the folder you pick already exists and is not already registered here, you get a warning describing what is in there and a chance to back out. This stops a profile named `mem` from quietly pointing at `~/.claude-mem` and, later, a `remove` from offering to delete another tool's data.
+
 ### `claude-multiprofile list`
 
-Prints every configured profile with its paths and creation date.
+Prints every configured profile with its paths and creation date, plus the `claude` binary currently winning on your PATH and its version. All profiles share that one binary, so it is worth seeing alongside them.
 
 ### `claude-multiprofile status`
 
-Walks every profile and verifies the directories, .app, and shell aliases still exist. Useful after a machine migration or after manually editing your `.zshrc`.
+Walks every profile and verifies the directories, .app, and shell aliases still exist. Also reports the resolved `claude` binary and warns when more than one is on your PATH. Useful after a machine migration or after manually editing your `.zshrc`.
 
 ### `claude-multiprofile doctor [--fix]`
 
