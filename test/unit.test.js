@@ -122,3 +122,111 @@ test("writeAliases creates a managed block when none exists, and replaces it on 
   assert.equal(startMatches.length, 1);
   assert.equal(endMatches.length, 1);
 });
+
+// ---------------------------------------------------------------------------
+// permissions.js - cross-profile read protection (issue #4)
+// ---------------------------------------------------------------------------
+//
+// This is the riskiest new code because it edits a file the user also owns
+// (settings.json). The invariants that matter: we must block every sibling,
+// we must never eat the user's own deny rules, and repeated runs must not
+// accumulate stale rules when the profile set changes.
+
+import { resyncDenyRules, auditDenyRules, settingsPathFor } from "../src/permissions.js";
+
+function tmpProfile(name, root) {
+  const configDir = path.join(root, `.claude-${name}`);
+  fs.mkdirSync(configDir, { recursive: true });
+  return {
+    name,
+    type: "code",
+    code: { configDir, aliasName: `claude-${name}` },
+    desktop: null,
+  };
+}
+
+function readSettings(configDir) {
+  return JSON.parse(fs.readFileSync(settingsPathFor(configDir), "utf8"));
+}
+
+test("resyncDenyRules: each profile denies reads of every sibling, using absolute // syntax", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-perm-"));
+  const a = tmpProfile("alpha", root);
+  const b = tmpProfile("beta", root);
+  resyncDenyRules({ profiles: [a, b] });
+
+  const denyA = readSettings(a.code.configDir).permissions.deny;
+  const denyB = readSettings(b.code.configDir).permissions.deny;
+
+  // Absolute paths in Claude Code settings require a DOUBLE leading slash;
+  // a single slash would resolve relative to the settings source instead.
+  assert.equal(denyA.length, 1);
+  assert.match(denyA[0], /^Read\(\/\//);
+  assert.ok(denyA[0].includes(".claude-beta"), "alpha must block beta");
+  assert.ok(!denyA[0].includes(".claude-alpha"), "alpha must not block itself");
+  assert.ok(denyB[0].includes(".claude-alpha"), "beta must block alpha");
+
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("resyncDenyRules: preserves user-authored deny rules", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-perm-"));
+  const a = tmpProfile("alpha", root);
+  const b = tmpProfile("beta", root);
+
+  // User already had their own rule plus unrelated settings.
+  fs.writeFileSync(
+    settingsPathFor(a.code.configDir),
+    JSON.stringify({ model: "opus", permissions: { deny: ["Read(//etc/secrets/**)"] } }),
+    "utf8"
+  );
+
+  resyncDenyRules({ profiles: [a, b] });
+  const s = readSettings(a.code.configDir);
+
+  assert.ok(s.permissions.deny.includes("Read(//etc/secrets/**)"), "user rule survives");
+  assert.equal(s.model, "opus", "unrelated settings survive");
+  assert.ok(s.permissions.deny.some((r) => r.includes(".claude-beta")), "managed rule added");
+
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("resyncDenyRules: drops stale rules when a profile goes away, and is idempotent", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-perm-"));
+  const a = tmpProfile("alpha", root);
+  const b = tmpProfile("beta", root);
+  const c = tmpProfile("gamma", root);
+
+  resyncDenyRules({ profiles: [a, b, c] });
+  assert.equal(readSettings(a.code.configDir).permissions.deny.length, 2);
+
+  // Running again with the same set must not duplicate anything.
+  resyncDenyRules({ profiles: [a, b, c] });
+  assert.equal(readSettings(a.code.configDir).permissions.deny.length, 2);
+
+  // gamma removed -> alpha should no longer reference it.
+  resyncDenyRules({ profiles: [a, b] });
+  const deny = readSettings(a.code.configDir).permissions.deny;
+  assert.equal(deny.length, 1);
+  assert.ok(!deny.some((r) => r.includes(".claude-gamma")), "stale rule removed");
+
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("auditDenyRules: reports drift when a managed rule is missing", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-perm-"));
+  const a = tmpProfile("alpha", root);
+  const b = tmpProfile("beta", root);
+  const reg = { profiles: [a, b] };
+
+  // Nothing written yet -> alpha is missing its rule.
+  let findings = auditDenyRules(reg);
+  assert.equal(findings.length, 2);
+  assert.equal(findings[0].missing.length, 1);
+
+  resyncDenyRules(reg);
+  findings = auditDenyRules(reg);
+  assert.ok(findings.every((f) => f.missing.length === 0), "no drift after resync");
+
+  fs.rmSync(root, { recursive: true, force: true });
+});

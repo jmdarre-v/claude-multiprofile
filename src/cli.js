@@ -9,9 +9,11 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { select } from "@inquirer/prompts";
 import { add } from "./commands/add.js";
+import { doctor } from "./commands/doctor.js";
 import { extensions } from "./commands/extensions.js";
 import { list } from "./commands/list.js";
 import { remove } from "./commands/remove.js";
+import { rename } from "./commands/rename.js";
 import { repair } from "./commands/repair.js";
 import { status } from "./commands/status.js";
 import { upgrade } from "./commands/upgrade.js";
@@ -35,8 +37,13 @@ COMMANDS
   add                    Create a new profile (interactive wizard)
   list                   List configured profiles
   status                 Health-check all configured profiles
+  doctor [--fix]         Diagnose the whole setup: which claude wins on PATH,
+                         broken npm installs, directory collisions, and
+                         cross-profile read protection (--fix repairs drift)
   extensions             Copy Claude Desktop extensions between profiles
                          (interactive: pick source, then target)
+  rename [old] [new]     Rename a profile and move its folders, alias, and
+                         launcher to match (interactive if no names given)
   repair <name>          Re-register a profile launcher with macOS LaunchServices
                          (fixes Dock icons that stop responding to double-click)
   remove [name]          Remove a profile (interactive if no name given)
@@ -71,14 +78,16 @@ async function pickCommand() {
       { name: "add        — Create a new profile (interactive wizard)", value: "add" },
       { name: "list       — List configured profiles", value: "list" },
       { name: "status     — Health-check all profiles", value: "status" },
+      { name: "doctor     — Diagnose PATH, installs, collisions, isolation", value: "doctor" },
       { name: "extensions — Copy Claude Desktop extensions between profiles", value: "extensions" },
+      { name: "rename     — Rename a profile and move its folders/alias", value: "rename" },
       { name: "repair     — Re-register a profile launcher with macOS", value: "repair" },
       { name: "remove     — Remove a profile", value: "remove" },
       { name: "upgrade    — Upgrade claude-multiprofile to the latest version", value: "upgrade" },
       { name: "help       — Show full help text", value: "help" },
       { name: "exit", value: "exit" },
     ],
-    pageSize: 10,
+    pageSize: 12,
   });
 }
 
@@ -117,7 +126,7 @@ export async function run(argv) {
     rest = [];
   }
 
-  const handlers = { add, list, status, extensions, repair, remove, upgrade };
+  const handlers = { add, list, status, doctor, extensions, rename, repair, remove, upgrade };
   const handler = handlers[cmd];
   if (!handler) {
     err(`Unknown command: ${cmd}`);

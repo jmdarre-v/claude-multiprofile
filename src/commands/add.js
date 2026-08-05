@@ -30,7 +30,8 @@ import {
   sanitizeName,
   titleCase,
 } from "../util.js";
-import { findProfile, addToRegistry } from "../registry.js";
+import { findProfile, addToRegistry, getRegistry } from "../registry.js";
+import { resyncDenyRules } from "../permissions.js";
 import {
   findClaudeApp,
   defaultDataDirFor,
@@ -44,6 +45,34 @@ import {
   setupCode,
 } from "../code.js";
 import { detectShell, rcPathForShell } from "../shell.js";
+
+// Directory basenames under $HOME that belong to OTHER tools in the Claude
+// ecosystem (or to Claude itself). Naming a profile `mem` would default its
+// config dir to ~/.claude-mem — which is claude-mem's data directory — and a
+// later `remove` would then offer to delete it. We refuse these names outright
+// rather than asking, because there is never a good reason to claim them.
+//
+// Keyed by profile name; the value is what it would collide with.
+const RESERVED_NAMES = {
+  mem: "claude-mem (~/.claude-mem)",
+  profiles: "claude-profiles (~/.claude-profiles)",
+  multiprofile: "this tool's own config (~/.claude-multiprofile)",
+  code: "reserved (~/.claude-code)",
+  desktop: "reserved (~/.claude-desktop)",
+};
+
+// A directory we're about to claim is only safe if it doesn't already exist,
+// OR it exists and is already registered to this tool. Anything else is
+// somebody else's data and we must not silently adopt it.
+function isUnmanagedExistingDir(dirPath) {
+  if (!fileExists(dirPath)) return false;
+  const reg = getRegistry();
+  for (const p of reg.profiles) {
+    if (p.code && p.code.configDir === dirPath) return false;
+    if (p.desktop && p.desktop.dataDir === dirPath) return false;
+  }
+  return true;
+}
 
 export async function add() {
   header("Add a Claude profile");
@@ -107,6 +136,9 @@ export async function add() {
         return `Use lowercase letters, numbers, and hyphens only. Suggestion: "${cleaned}"`;
       }
       if (findProfile(cleaned)) return `Profile "${cleaned}" already exists.`;
+      if (RESERVED_NAMES[cleaned]) {
+        return `"${cleaned}" is reserved — it would collide with ${RESERVED_NAMES[cleaned]}. Pick another name.`;
+      }
       return true;
     },
   });
@@ -133,6 +165,11 @@ export async function add() {
   let codeConfig = null;
   if (wantsCode) {
     codeConfig = await askCodeQuestions(name);
+    // The user declined to claim an existing folder. If Code was the only
+    // target there's nothing left to do; otherwise carry on with Desktop.
+    if (!codeConfig && !desktopConfig) {
+      return;
+    }
   }
 
   // ---- Phase 3: confirm and execute ------------------------------------
@@ -181,6 +218,13 @@ export async function add() {
       : null,
     createdAt: new Date().toISOString(),
   });
+
+  // ---- Cross-profile read protection (issue #4) ------------------------
+  //
+  // Now that the profile set has changed, rewrite every Code profile's deny
+  // rules so no profile can read a sibling's config/data directories.
+
+  resyncDenyRules(getRegistry(), { verbose: true });
 
   // ---- Final guidance -------------------------------------------------
 
@@ -248,6 +292,26 @@ async function askDesktopQuestions(name) {
   });
   const dataDir = expandHome(dataDirRaw.trim());
 
+  // Same protection as the Code config dir: never silently adopt a folder
+  // that already exists and belongs to something else.
+  if (isUnmanagedExistingDir(dataDir)) {
+    console.log("");
+    warn(`${tildify(dataDir)} already exists and isn't managed by this tool.`);
+    explain(`
+      This tool will treat that folder's contents as this profile's Desktop
+      data — including when "claude-multiprofile remove" later offers to
+      delete it. If it belongs to something else, choose a different path.
+    `);
+    const claimIt = await confirm({
+      message: `Use ${tildify(dataDir)} anyway?`,
+      default: false,
+    });
+    if (!claimIt) {
+      warn("Cancelled. Re-run and choose a different data folder.");
+      return null;
+    }
+  }
+
   // App launcher path
   explain(`
     We'll generate a small .app bundle that, when double-clicked, launches
@@ -305,6 +369,30 @@ async function askCodeQuestions(name) {
     },
   });
   const configDir = expandHome(configDirRaw.trim());
+
+  // Claiming a directory that already exists and isn't ours is how another
+  // tool's data (claude-mem, a hand-rolled setup) gets adopted into a profile
+  // — and later offered up for deletion by `remove`. Make the user say yes.
+  if (isUnmanagedExistingDir(configDir)) {
+    console.log("");
+    warn(`${tildify(configDir)} already exists and isn't managed by this tool.`);
+    explain(`
+      Pointing a profile at an existing folder means this tool will treat its
+      contents as that profile's data — including when you later run
+      "claude-multiprofile remove", which offers to delete the folder.
+
+      If this folder belongs to another tool (claude-mem, claude-profiles) or
+      to a setup you made by hand, pick a different path instead.
+    `);
+    const claimIt = await confirm({
+      message: `Use ${tildify(configDir)} anyway?`,
+      default: false,
+    });
+    if (!claimIt) {
+      warn("Cancelled. Re-run and choose a different config folder.");
+      return null;
+    }
+  }
 
   const defaultAlias = defaultAliasNameFor(name);
   const aliasName = await input({

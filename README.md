@@ -111,9 +111,30 @@ Prints every configured profile with its paths and creation date.
 
 Walks every profile and verifies the directories, .app, and shell aliases still exist. Useful after a machine migration or after manually editing your `.zshrc`.
 
-### `claude-multiprofile extensions <profile>`
+### `claude-multiprofile doctor [--fix]`
 
-Copy Claude Desktop extensions from your default install into a Desktop profile, interactively.
+Diagnoses the machine, not just the registry. `status` asks "is each profile's paperwork in order?" — `doctor` asks "will these profiles actually behave?"
+
+It checks:
+
+- **Which `claude` wins on PATH**, its version, and any shadowed copies. Every profile shares one binary, so a duplicate from another Node version is a common cause of "I upgraded and nothing changed."
+- **Broken npm installs** — a package directory left with `node_modules/` but no `package.json` silently de-registers the command and lets PATH fall through to an older copy.
+- **Directory collisions** — a profile pointing at another tool's data folder (`~/.claude-mem`, `~/.claude-profiles`), or two profiles sharing one directory.
+- **Cross-profile read protection** drift (see [Profile isolation](#profile-isolation) below).
+
+`--fix` repairs what's safe to repair automatically (currently the deny-rule drift). Everything else is reported with the command to run.
+
+### `claude-multiprofile rename [old] [new]`
+
+Renames a profile and moves everything that encodes its name: the Code config folder, the shell alias, the Desktop data folder, the launcher `.app` and its bundle ID, the registry entry, and every other profile's isolation rules.
+
+Paths you chose manually are left where they are — only folders still at their default location get moved.
+
+**Renaming a Code profile signs it out.** Claude Code stores its login in the macOS Keychain under a key derived from the config folder path, so moving the folder orphans the token and you'll run `/login` once more. This tool deliberately does not try to move the Keychain entry: the key derivation isn't reproducible, and guessing risks clobbering a different account's credentials. Chats, skills, and MCP config all move normally. Desktop profiles are unaffected — their auth lives inside the folder being moved.
+
+### `claude-multiprofile extensions`
+
+Copy Claude Desktop extensions from one install into another, interactively. It prompts for the source (your default install or any profile) and then the target profile — no profile name to mistype, and cross-profile copying works in both directions.
 
 When you create a profile, it starts empty by design — none of your default install's extensions, settings, or chats follow it over. That isolation is the point. But re-installing every extension on every profile by hand is tedious. This command is the relief valve.
 
@@ -125,8 +146,8 @@ The flow:
 4. If conflicts exist, asks once whether to overwrite (or use `--force` to skip the prompt)
 
 ```bash
-claude-multiprofile extensions work             # interactive
-claude-multiprofile extensions work --force     # overwrite conflicts without asking
+claude-multiprofile extensions            # interactive: pick source, then target
+claude-multiprofile extensions --force    # overwrite conflicts without asking
 ```
 
 Restart Claude Desktop after running this for the new extensions to load.
@@ -143,7 +164,9 @@ For Code-only profiles, this command has nothing to repair (there's no .app) and
 
 ### `claude-multiprofile remove [name]`
 
-Tears down a profile. Removes the launcher .app, the shell alias, and the registry entry. By default the data folders are kept (so you can recover your chats if you change your mind). The wizard asks separately about deleting the data folders.
+Tears down a profile. Unregisters and removes the launcher .app, removes the shell alias and the registry entry, and rewrites the remaining profiles' isolation rules. By default the data folders are kept (so you can recover your chats if you change your mind). The wizard asks separately about deleting the data folders.
+
+One thing it deliberately leaves behind: the profile's saved login in your Keychain. Claude Code keys those entries by a hash of the config directory that this tool can't reproduce, and deleting the wrong one would take out another account's credentials. The orphan is inert. To avoid creating one, run `/logout` inside the profile before removing it; to clear it by hand, search Keychain Access for `Claude Code-credentials`.
 
 ### `claude-multiprofile help` / `--version`
 
@@ -274,6 +297,47 @@ The Code half works fine on Linux, the Desktop half doesn't (Claude Desktop is m
 
 The pitch for this tool over the others: it's the only one that handles Claude Desktop alongside Claude Code in a single command, and the interactive wizard means you don't have to remember the right flags or know in advance where files should go.
 
+## Profile isolation
+
+Profiles are isolated by **configuration**: each one points Claude at a different config/data directory (`CLAUDE_CONFIG_DIR` for Code, `--user-data-dir` for Desktop). That fully separates identity and storage — separate logins, chats, settings, and MCP connectors.
+
+What it does **not** do on its own is restrict what a running profile can *reach* on disk. A broad filesystem search from `$HOME` could surface a sibling profile's `CLAUDE.md`, skills, or MCP config, and pull the wrong context into the conversation.
+
+Since v0.1.10, Code profiles get an enforceable guard. Every profile's `settings.json` receives `permissions.deny` rules blocking reads of every *other* profile's directories:
+
+```json
+{
+  "permissions": {
+    "deny": ["Read(//Users/you/.claude-work/**)"]
+  }
+}
+```
+
+These are hard denials — they don't prompt — and Claude Code applies `Read` rules to Grep and Glob as well, so directory walks are covered too. The rules are rewritten automatically on `add`, `remove`, and `rename`, and `doctor --fix` repairs them if they drift.
+
+Two limits worth knowing:
+
+- **Your own rules are preserved.** The tool tracks only the rules it wrote and never removes deny rules you added yourself.
+- **Desktop profiles have no equivalent hook.** Claude Desktop is Electron, not Claude Code, so there's no settings-level permission system to use. Desktop profiles remain isolated by data directory only. True filesystem confinement there would require `sandbox-exec` or a container.
+
+## Known limitations
+
+### Dock icons show the standard Claude icon
+
+If you customize a launcher's icon, Finder and Get Info show your custom icon — but the Dock tile of the *running* window shows Claude's standard icon.
+
+This is structural. The launcher is a small AppleScript bundle whose whole job is to run `open -n -a Claude.app --args --user-data-dir=...` and then exit. The window you end up with belongs to Claude.app's own process, not to the launcher, so the Dock tile uses Claude's icon. Changing the launcher's icon can't affect it, because the launcher isn't the running application.
+
+Giving each profile a genuinely distinct Dock icon would mean shipping a separate re-bundled copy of Claude per profile, which breaks code signing and auto-update. Not a trade worth making. For telling windows apart at a glance, see [Visual disambiguation](#visual-disambiguation).
+
+### Chats and Projects don't transfer between profiles
+
+Profiles isolate accounts, so there's no way to move a conversation or a Desktop Project from one profile to another. Those live server-side, tied to the account that created them; this tool only ever touches local files and never talks to Claude's servers.
+
+Your **project files on disk are already shared** — profiles redirect Claude's own state, never your working directory. Any profile can open the same repository. What doesn't follow you is conversation history and account-bound Projects.
+
+If you're switching profiles to spread usage across accounts, the workflow that works is to keep the context in the repository rather than in the chat: a `CLAUDE.md` (or a notes file) that any profile reads on start, so a fresh conversation in another account picks up where the last one left off.
+
 ## Security notes
 
 The tool reads and writes the following on your machine:
@@ -281,6 +345,7 @@ The tool reads and writes the following on your machine:
 - `~/Library/Application Support/Claude-{Name}/` (creates new folders only)
 - `~/Applications/` (creates new .app bundles only)
 - `~/.claude-{name}/` (creates new folders only)
+- `~/.claude-{name}/settings.json` (adds cross-profile `permissions.deny` rules; tracks only the rules it wrote and never removes yours)
 - `~/.zshrc`, `~/.bash_profile`, or `~/.config/fish/config.fish` (adds a delimited managed block; never touches lines outside the markers)
 - `~/.config/claude-multiprofile/profiles.json` (the registry)
 

@@ -76,6 +76,20 @@ export function removeFromRegistry(name) {
   return reg.profiles.length < before;
 }
 
+export function replaceProfile(oldName, newProfile) {
+  // Used by `rename`: swap the entry for `oldName` with a fully-rebuilt
+  // profile object (which may carry a different name). Order is preserved so
+  // `list` output doesn't jump around.
+  const reg = getRegistry();
+  const idx = reg.profiles.findIndex((p) => p.name === oldName);
+  if (idx === -1) {
+    reg.profiles.push(newProfile);
+  } else {
+    reg.profiles[idx] = newProfile;
+  }
+  saveRegistry(reg);
+}
+
 export function registryLocation() {
   // Surfaced in `status` output so users know where the truth lives.
   return REGISTRY_PATH;

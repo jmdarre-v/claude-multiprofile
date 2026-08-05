@@ -7,9 +7,11 @@
 // chats and settings are recoverable.
 
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import { select, confirm } from "@inquirer/prompts";
 import { getRegistry, removeFromRegistry } from "../registry.js";
 import { removeAlias } from "../code.js";
+import { resyncDenyRules } from "../permissions.js";
 import {
   header,
   ok,
@@ -20,7 +22,14 @@ import {
   pathStr,
   tildify,
   fileExists,
+  dim,
 } from "../util.js";
+
+// Same path `repair` uses. Deleting a .app without unregistering it leaves a
+// dangling LaunchServices entry, which is one source of "ghost" launchers
+// that still appear in Spotlight / Open With menus after removal.
+const LSREGISTER =
+  "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
 
 export async function remove(args) {
   header("Remove a Claude profile");
@@ -75,6 +84,21 @@ export async function remove(args) {
   if (profile.desktop) {
     step("Removing Desktop launcher");
     if (fileExists(profile.desktop.appPath)) {
+      // Unregister from LaunchServices BEFORE deleting the bundle. Once the
+      // files are gone lsregister can't resolve the bundle to remove its
+      // entry, and the stale registration lingers until the database is
+      // rebuilt.
+      if (fileExists(LSREGISTER)) {
+        try {
+          execFileSync(LSREGISTER, ["-u", profile.desktop.appPath], {
+            stdio: "pipe",
+          });
+          ok("Unregistered launcher from LaunchServices.");
+        } catch {
+          // Non-fatal: worst case is a stale entry until the next rebuild.
+          warn("Could not unregister from LaunchServices (continuing).");
+        }
+      }
       try {
         fs.rmSync(profile.desktop.appPath, { recursive: true, force: true });
         ok(`Deleted ${pathStr(tildify(profile.desktop.appPath))}.`);
@@ -122,4 +146,39 @@ export async function remove(args) {
 
   removeFromRegistry(profile.name);
   ok(`Profile "${profile.name}" removed.`);
+
+  // Rewrite the remaining profiles' cross-profile deny rules so they no
+  // longer reference the profile we just deleted.
+  resyncDenyRules(getRegistry(), { verbose: true });
+
+  // ---- Keychain guidance -------------------------------------------------
+  //
+  // Claude Code stores its OAuth token in the login Keychain under a service
+  // name like `Claude Code-credentials-<hash>`, where the hash is derived
+  // from CLAUDE_CONFIG_DIR by a scheme we can't reproduce. That means we
+  // cannot reliably identify (let alone delete) the entry for this specific
+  // profile, and guessing risks deleting the WRONG account's credentials.
+  //
+  // The orphaned entry is inert — nothing reads it once the config dir is
+  // gone — so leaving it is safe. We tell the user the clean way to avoid
+  // creating one in the first place.
+  if (profile.code) {
+    console.log("");
+    info("Note: this profile's saved login remains in your Keychain.");
+    console.log(
+      "  " +
+        dim(
+          "It's inert (nothing reads it now), but to avoid leaving one behind next time,"
+        )
+    );
+    console.log(
+      "  " + dim('run "/logout" inside the profile before removing it.')
+    );
+    console.log(
+      "  " +
+        dim(
+          'To clear it by hand: Keychain Access → search "Claude Code-credentials".'
+        )
+    );
+  }
 }

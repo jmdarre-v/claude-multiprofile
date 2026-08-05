@@ -7,6 +7,7 @@
 
 import { getRegistry, registryLocation } from "../registry.js";
 import { detectDefaults } from "../detect.js";
+import { resolveClaude } from "../claudebin.js";
 import {
   detectShell,
   rcPathForShell,
@@ -45,6 +46,27 @@ export async function status() {
     console.log(`    ✓ Code config:    ${tildify(defaults.code.configDir)}`);
   } else {
     console.log("    " + dim("Claude Code: not detected (either not installed or never launched)"));
+  }
+  console.log("");
+
+  // ---- Shared `claude` binary ----------------------------------------------
+  //
+  // All profiles share one binary, so a shadowed duplicate on PATH silently
+  // affects every profile at once. Worth showing even when healthy.
+
+  const bin = resolveClaude();
+  console.log(`  ${pathStr("claude binary")} ${dim("(shared by all profiles)")}`);
+  if (bin.found) {
+    console.log(`    ✓ Path:           ${tildify(bin.winner)}`);
+    console.log(`    ✓ Version:        ${bin.version || dim("unknown")}`);
+    if (bin.shadowed.length > 0) {
+      console.log(
+        `    ⚠ ${bin.shadowed.length} other copy/copies on PATH (shadowed):`
+      );
+      for (const p of bin.shadowed) console.log(`        ${dim(tildify(p))}`);
+    }
+  } else {
+    console.log("    ✗ Not found on PATH — Claude Code profiles won't launch.");
   }
   console.log("");
 

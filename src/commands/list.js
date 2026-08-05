@@ -14,7 +14,8 @@
 
 import { getRegistry, registryLocation } from "../registry.js";
 import { detectDefaults } from "../detect.js";
-import { header, info, pathStr, tildify, command, dim } from "../util.js";
+import { resolveClaude } from "../claudebin.js";
+import { header, info, warn, pathStr, tildify, command, dim } from "../util.js";
 
 export async function list() {
   header("Claude installs and profiles");
@@ -36,6 +37,28 @@ export async function list() {
     console.log("");
   } else {
     console.log("  " + dim("No default Claude install detected on this machine."));
+    console.log("");
+  }
+
+  // ---- The shared `claude` binary ----------------------------------------
+  //
+  // Every profile runs the SAME `claude` binary; only the config dir differs.
+  // So which copy wins on PATH affects all of them at once, and a shadowed
+  // duplicate is a common cause of "my profile is on an old version".
+
+  const bin = resolveClaude();
+  if (bin.found) {
+    console.log(`  ${pathStr("claude binary")} ${dim("(shared by all profiles)")}`);
+    console.log(`    Path:            ${tildify(bin.winner)}`);
+    console.log(`    Version:         ${bin.version || dim("unknown")}`);
+    if (bin.shadowed.length > 0) {
+      console.log(
+        `    ${dim(`Also on PATH (shadowed): ${bin.shadowed.map(tildify).join(", ")}`)}`
+      );
+    }
+    console.log("");
+  } else {
+    warn("No `claude` binary found on PATH. Claude Code profiles won't launch.");
     console.log("");
   }
 
