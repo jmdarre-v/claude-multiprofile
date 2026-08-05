@@ -34,6 +34,48 @@ export function settingsPathFor(configDir) {
   return path.join(configDir, "settings.json");
 }
 
+// Is it safe to WRITE this profile's settings.json?
+//
+// Writing through a symlink mutates the link's target, not the link. If a
+// user has pointed their profile's settings.json at a shared file (the
+// obvious case being ~/.claude/settings.json, so that profiles share config),
+// then writing per-profile deny rules there would push one profile's rules
+// into a file every other profile and the default install also read. Two
+// profiles would then take turns overwriting each other, and because each
+// treats the other's rules as its own stale managed set, they would strip
+// each other on every add/remove/rename. Silently.
+//
+// A symlink that stays INSIDE the profile's own config dir is harmless, so we
+// only refuse when the resolved target escapes it.
+export function settingsWriteSafety(configDir) {
+  const settingsPath = settingsPathFor(configDir);
+  let st;
+  try {
+    st = fs.lstatSync(settingsPath);
+  } catch {
+    return { safe: true }; // missing: we'll create a regular file
+  }
+  if (!st.isSymbolicLink()) return { safe: true };
+
+  // It's a link. Resolve both sides and check containment.
+  let target;
+  let root;
+  try {
+    target = fs.realpathSync(settingsPath);
+  } catch {
+    // Broken link. Writing would create the target out from under whatever
+    // it points at, so refuse rather than guess.
+    return { safe: false, reason: "broken-symlink", target: null };
+  }
+  try {
+    root = fs.realpathSync(configDir);
+  } catch {
+    return { safe: false, reason: "symlink", target };
+  }
+  const inside = target === root || target.startsWith(root + path.sep);
+  return inside ? { safe: true } : { safe: false, reason: "symlink", target };
+}
+
 function denyRuleForPath(absPath) {
   // Claude Code absolute-path syntax uses a DOUBLE leading slash. A single
   // leading slash would be read as relative to the settings source, not the
@@ -103,6 +145,18 @@ function resyncOne(profile, allProfiles) {
   if (!fileExists(configDir)) return null;
 
   const settingsPath = settingsPathFor(configDir);
+
+  // Never write per-profile rules through a link into shared config.
+  const safety = settingsWriteSafety(configDir);
+  if (!safety.safe) {
+    return {
+      name: profile.name,
+      settingsPath,
+      skipped: safety.reason,
+      target: safety.target,
+    };
+  }
+
   const { settings, malformed } = readSettings(settingsPath);
   if (malformed) {
     // Never write over a file we couldn't parse. Report it so the resync
@@ -150,6 +204,9 @@ export function resyncDenyRules(registry, opts = {}) {
   }
   const updated = results.filter((r) => !r.skipped);
   const skipped = results.filter((r) => r.skipped === "malformed");
+  const linked = results.filter(
+    (r) => r.skipped === "symlink" || r.skipped === "broken-symlink"
+  );
   if (opts.verbose && updated.length > 0) {
     ok("Updated cross-profile read-protection:");
     for (const r of updated) {
@@ -168,6 +225,13 @@ export function resyncDenyRules(registry, opts = {}) {
     );
     info("  Fix the JSON by hand, then run `claude-multiprofile doctor --fix`.");
   }
+  for (const r of linked) {
+    warn(`Skipped ${r.name}: ${tildify(r.settingsPath)} is a symlink out of the profile.`);
+    if (r.target) info(`  It points at ${tildify(r.target)}`);
+    info("  Writing there would push this profile's rules into shared config,");
+    info("  where other profiles would read and overwrite them. Replace the link");
+    info("  with a real file to get cross-profile read protection.");
+  }
   return results;
 }
 
@@ -181,6 +245,14 @@ export function stripManagedDenyRules(profile) {
   if (!fileExists(profile.code.configDir)) return false;
 
   const settingsPath = settingsPathFor(profile.code.configDir);
+
+  // Same boundary as resyncOne: never write through a link into shared config.
+  const safety = settingsWriteSafety(profile.code.configDir);
+  if (!safety.safe) {
+    warn(`${tildify(settingsPath)} is a symlink out of the profile; left untouched.`);
+    return false;
+  }
+
   const { settings, malformed } = readSettings(settingsPath);
   if (malformed) {
     warn(`${tildify(settingsPath)} is not valid JSON; left untouched.`);
@@ -210,6 +282,18 @@ export function auditDenyRules(registry) {
     const expected = managedRulesForProfile(p, profiles);
     if (expected.length === 0) continue;
     const settingsPath = settingsPathFor(p.code.configDir);
+    const safety = settingsWriteSafety(p.code.configDir);
+    if (!safety.safe) {
+      findings.push({
+        name: p.name,
+        settingsPath,
+        expected: expected.length,
+        missing: expected,
+        symlink: true,
+        target: safety.target,
+      });
+      continue;
+    }
     const { settings, malformed } = readSettings(settingsPath);
     if (malformed) {
       findings.push({

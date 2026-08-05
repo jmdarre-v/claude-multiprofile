@@ -246,6 +246,75 @@ test("resyncDenyRules: never overwrites a malformed settings.json", () => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+test("resyncDenyRules: refuses to write through a settings.json symlink", async () => {
+  const { stripManagedDenyRules } = await import("../src/permissions.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-perm-"));
+  const a = tmpProfile("alpha", root);
+  const b = tmpProfile("beta", root);
+
+  // Simulate a user sharing config: the profile's settings.json is a link to
+  // a file outside the profile. Writing through it would put alpha's
+  // per-profile deny rules into shared config that beta also reads.
+  const shared = path.join(root, "shared-settings.json");
+  fs.writeFileSync(shared, JSON.stringify({ model: "opus" }), "utf8");
+  fs.symlinkSync(shared, settingsPathFor(a.code.configDir));
+
+  const results = resyncDenyRules({ profiles: [a, b] });
+
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(shared, "utf8")),
+    { model: "opus" },
+    "shared target must not be mutated"
+  );
+  assert.ok(
+    fs.lstatSync(settingsPathFor(a.code.configDir)).isSymbolicLink(),
+    "the link itself is left alone"
+  );
+  assert.ok(results.some((r) => r.name === "alpha" && r.skipped === "symlink"));
+  // The healthy sibling is unaffected.
+  assert.ok(
+    readSettings(b.code.configDir).permissions.deny.some((r) => r.includes(".claude-alpha"))
+  );
+
+  // stripManagedDenyRules honours the same boundary.
+  assert.equal(stripManagedDenyRules(a), false);
+  assert.deepEqual(JSON.parse(fs.readFileSync(shared, "utf8")), { model: "opus" });
+
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("settingsWriteSafety: a symlink that stays inside the profile is allowed", async () => {
+  const { settingsWriteSafety } = await import("../src/permissions.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-perm-"));
+  const p = tmpProfile("alpha", root);
+  const dir = p.code.configDir;
+
+  // No file yet: safe to create.
+  assert.equal(settingsWriteSafety(dir).safe, true);
+
+  // A link pointing elsewhere inside the same profile dir is harmless.
+  const inner = path.join(dir, "real-settings.json");
+  fs.writeFileSync(inner, "{}", "utf8");
+  fs.symlinkSync(inner, settingsPathFor(dir));
+  assert.equal(settingsWriteSafety(dir).safe, true, "internal link is fine");
+
+  // Repoint it outside the profile: now it's refused.
+  fs.rmSync(settingsPathFor(dir));
+  const outside = path.join(root, "elsewhere.json");
+  fs.writeFileSync(outside, "{}", "utf8");
+  fs.symlinkSync(outside, settingsPathFor(dir));
+  const verdict = settingsWriteSafety(dir);
+  assert.equal(verdict.safe, false);
+  assert.equal(verdict.reason, "symlink");
+
+  // A broken link is refused too, rather than silently creating the target.
+  fs.rmSync(settingsPathFor(dir));
+  fs.symlinkSync(path.join(root, "does-not-exist.json"), settingsPathFor(dir));
+  assert.equal(settingsWriteSafety(dir).reason, "broken-symlink");
+
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test("stripManagedDenyRules: removes our rules and marker, keeps the user's", async () => {
   const { stripManagedDenyRules } = await import("../src/permissions.js");
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-perm-"));

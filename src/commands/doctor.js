@@ -323,9 +323,22 @@ function checkDenyRules(t, reg, fix) {
   for (const f of drifted) {
     warn(`${f.name}: ${f.missing.length} of ${f.expected} deny rule(s) missing.`);
     console.log(`      ${dim(tildify(f.settingsPath))}`);
+    if (f.symlink) {
+      // --fix can't help here: writing is exactly what we refuse to do.
+      info("      Its settings.json is a symlink out of the profile, so rules are not written.");
+      if (f.target) info(`      It points at ${tildify(f.target)}`);
+      info("      Replace the link with a real file to get read protection for this profile.");
+    } else if (f.malformed) {
+      info("      Its settings.json is not valid JSON, so it was left untouched.");
+    }
   }
 
-  if (fix) {
+  // A symlinked or malformed settings.json is not repairable by rewriting it.
+  const repairable = drifted.filter((f) => !f.symlink && !f.malformed);
+  if (fix && repairable.length === 0) {
+    warn("Nothing here is safe to repair automatically. See the notes above.");
+    t.warnings++;
+  } else if (fix) {
     resyncDenyRules(reg, { verbose: false });
     ok("Repaired: deny rules rewritten from the registry.");
   } else {

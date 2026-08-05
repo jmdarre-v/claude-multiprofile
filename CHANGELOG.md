@@ -3,6 +3,23 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## 0.1.13 (2026-08-05)
+
+### Fixed
+
+- Cross-profile deny rules are no longer written through a `settings.json`
+  symlink. Writing to a link mutates its target, so a profile whose
+  `settings.json` points at shared config (for example `~/.claude`) would have
+  had its per-profile rules pushed into a file every other profile reads, with
+  each profile then stripping the others' rules on every `add`, `remove`, or
+  `rename`. Such profiles are now skipped with an explanation, and `doctor`
+  reports them as unprotected and names the link target. A symlink that stays
+  inside the profile's own directory is still fine. Broken links are refused
+  rather than silently creating the target.
+- `doctor --fix` no longer claims to have repaired deny rules when the only
+  findings are ones it deliberately refuses to touch (symlinked or malformed
+  `settings.json`).
+
 ## 0.1.12 (2026-08-05)
 
 ### Fixed
