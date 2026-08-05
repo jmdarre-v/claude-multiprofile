@@ -122,12 +122,12 @@ export function buildLaunchAppleScript(dataDir, claudeAppPath, codeConfigDir) {
   // Desktop spawns: those read ~/.claude in every profile, because Desktop
   // does not set CLAUDE_CONFIG_DIR for the CLI it launches. The practical
   // effect is that CLAUDE.md, settings.json, and per-project memory MERGE
-  // across profiles even when Desktop itself is cleanly separated — which
+  // across profiles even when Desktop itself is cleanly separated, which
   // is the failure this whole tool exists to prevent.
   //
   // Verified on macOS 25.5 (2026-07-29), A/B against a control launch:
   // `open --env` sets the variable in the launched app's environment AND in
-  // the environment its child processes inherit — the exact relationship
+  // the environment its child processes inherit, which is the exact relationship
   // Claude.app has with the claude-code CLI. Passing it via --env rather
   // than launching the binary directly keeps `open -n` semantics intact,
   // which the -n comment above explains is load-bearing.

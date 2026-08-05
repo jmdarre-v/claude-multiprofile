@@ -195,7 +195,7 @@ export async function add() {
     // inside Claude Desktop fall back to ~/.claude in every profile, and
     // CLAUDE.md / settings.json / per-project memory merge across profiles
     // even though Desktop itself is cleanly isolated.
-    // Undefined when the profile has no Code target — the launcher then
+    // Undefined when the profile has no Code target, in which case the launcher
     // omits --env and behaves exactly as it did before.
     desktopResult = setupDesktop({
       ...desktopConfig,
