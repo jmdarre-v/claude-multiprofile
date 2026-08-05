@@ -11,7 +11,7 @@ import { execFileSync } from "node:child_process";
 import { select, confirm } from "@inquirer/prompts";
 import { getRegistry, removeFromRegistry } from "../registry.js";
 import { removeAlias } from "../code.js";
-import { resyncDenyRules } from "../permissions.js";
+import { resyncDenyRules, stripManagedDenyRules } from "../permissions.js";
 import {
   header,
   ok,
@@ -140,6 +140,14 @@ export async function remove(args) {
         ok(`Deleted ${pathStr(tildify(profile.code.configDir))}.`);
       } catch (e) {
         warn(`Could not delete config folder: ${e.message}`);
+      }
+    } else if (!wipeCodeData) {
+      // The folder stays behind, so clean OUR deny rules out of its
+      // settings.json. The profile is leaving the registry; stale rules
+      // pointing at its former siblings would silently block reads if this
+      // folder is ever used with Claude Code again.
+      if (stripManagedDenyRules(profile)) {
+        ok("Removed this tool's read-protection rules from the kept folder.");
       }
     }
   }

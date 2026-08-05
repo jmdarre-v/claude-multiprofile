@@ -5,7 +5,7 @@
 // config. Useful after a machine migration, after manually mucking with
 // your .zshrc, or just to confirm a fresh install is healthy.
 
-import { getRegistry, registryLocation } from "../registry.js";
+import { getRegistry, registryLocation, registryHealth } from "../registry.js";
 import { detectDefaults } from "../detect.js";
 import { resolveClaude } from "../claudebin.js";
 import {
@@ -32,6 +32,12 @@ export async function status() {
   const reg = getRegistry();
   const shell = detectShell();
   const aliasNames = new Set(readManagedAliases(shell).map((a) => a.name));
+
+  if (registryHealth().state === "corrupt") {
+    warn(`The registry at ${pathStr(tildify(registryLocation()))} is not valid JSON.`);
+    info("Profiles below may be incomplete. Fix the JSON by hand (a .bak may sit next to it).");
+    console.log("");
+  }
 
   // ---- Default install -----------------------------------------------------
 

@@ -13,25 +13,14 @@
 
 import { execFileSync } from "node:child_process";
 
-// Locate every `claude` on PATH, in resolution order. We shell out to the
-// login shell's `which -a` rather than re-implementing PATH walking so we
-// match exactly what the user's own shell would pick.
-export function resolveClaudeBinaries() {
-  // `which -a` prints one path per line, highest-priority first. If nothing
-  // is found it exits non-zero, which we treat as "no claude on PATH".
-  let out = "";
-  try {
-    out = execFileSync("/usr/bin/which", ["-a", "claude"], {
-      encoding: "utf8",
-    });
-  } catch {
-    return [];
-  }
-  // De-dupe while preserving order: nvm shims commonly list the same real
-  // path twice (a shim plus its target), which is noise, not a conflict.
+// Parse `which -a` output into an ordered, de-duplicated path list. Split out
+// as a pure function so it's testable without a real PATH. nvm shims commonly
+// list the same real path twice (a shim plus its target); that's noise, not a
+// conflict, so duplicates collapse while order is preserved.
+export function parseWhichOutput(out) {
   const seen = new Set();
   const paths = [];
-  for (const line of out.split("\n")) {
+  for (const line of String(out).split("\n")) {
     const p = line.trim();
     if (p && !seen.has(p)) {
       seen.add(p);
@@ -39,6 +28,25 @@ export function resolveClaudeBinaries() {
     }
   }
   return paths;
+}
+
+// Locate every copy of `cmd` on PATH, in resolution order. We shell out to
+// `which -a` rather than re-implementing PATH walking so we match exactly
+// what the user's own shell would pick.
+export function resolveBinaries(cmd) {
+  // `which -a` prints one path per line, highest-priority first. If nothing
+  // is found it exits non-zero, which we treat as "not on PATH".
+  try {
+    return parseWhichOutput(
+      execFileSync("/usr/bin/which", ["-a", cmd], { encoding: "utf8" })
+    );
+  } catch {
+    return [];
+  }
+}
+
+export function resolveClaudeBinaries() {
+  return resolveBinaries("claude");
 }
 
 export function claudeVersion(binPath) {

@@ -14,7 +14,8 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { header, info, ok, err, command, dim } from "../util.js";
+import { header, info, ok, warn, err, command, dim, tildify, compareVersions } from "../util.js";
+import { resolveBinaries } from "../claudebin.js";
 
 const PKG_NAME = "claude-multiprofile";
 
@@ -44,8 +45,14 @@ export async function upgrade() {
   info(`Latest on npm:     ${latest}`);
   console.log("");
 
-  if (current === latest) {
+  const cmp = compareVersions(current, latest);
+  if (cmp === 0) {
     ok("You're already on the latest version. Nothing to do.");
+    return;
+  }
+  if (cmp > 0) {
+    info(`You're ahead of npm (${latest} published): running an unreleased build.`);
+    info("Nothing to do; publishing this version would bring npm up to date.");
     return;
   }
 
@@ -64,4 +71,35 @@ export async function upgrade() {
 
   console.log("");
   ok(`Upgraded ${PKG_NAME} ${current} → ${latest}`);
+
+  // ---- Verify the upgrade actually took ------------------------------------
+  //
+  // The trap: with several Node versions installed (nvm etc.), npm installs
+  // into the CURRENT version's global directory, but PATH may serve the
+  // command from a DIFFERENT version's directory. The install then succeeds
+  // while the command everyone runs stays old. Ask the winning binary for its
+  // version and compare.
+
+  const copies = resolveBinaries(PKG_NAME);
+  if (copies.length === 0) return; // e.g. invoked via npx; nothing to verify
+
+  const reported = spawnSync(copies[0], ["--version"], {
+    encoding: "utf8",
+    timeout: 15_000,
+  });
+  const winnerVersion = reported.status === 0 ? reported.stdout.trim() : null;
+
+  if (winnerVersion === latest) {
+    ok(`Verified: ${tildify(copies[0])} now reports ${latest}.`);
+  } else if (winnerVersion) {
+    console.log("");
+    warn(`The ${PKG_NAME} that wins on your PATH still reports ${winnerVersion}.`);
+    info(`Winning copy: ${tildify(copies[0])}`);
+    if (copies.length > 1) {
+      info("Other copies on PATH:");
+      for (const p of copies.slice(1)) console.log(`      ${dim(tildify(p))}`);
+    }
+    info("The upgrade landed in a different Node version's global directory.");
+    info(`Diagnose with ${command("claude-multiprofile doctor")}`);
+  }
 }

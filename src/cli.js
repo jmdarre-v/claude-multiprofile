@@ -44,8 +44,9 @@ COMMANDS
                          (interactive: pick source, then target)
   rename [old] [new]     Rename a profile and move its folders, alias, and
                          launcher to match (interactive if no names given)
-  repair <name>          Re-register a profile launcher with macOS LaunchServices
-                         (fixes Dock icons that stop responding to double-click)
+  repair [name]          Re-register a profile launcher with macOS LaunchServices
+                         (interactive if no name given; fixes Dock icons that
+                         stop responding to double-click)
   remove [name]          Remove a profile (interactive if no name given)
   upgrade                Upgrade claude-multiprofile to the latest version on npm
   help                   Show this help

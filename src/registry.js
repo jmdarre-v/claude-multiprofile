@@ -30,20 +30,41 @@ const EMPTY_REGISTRY = {
 
 // ---- Read --------------------------------------------------------------
 
-export function getRegistry() {
-  // Always returns a valid object. If anything's wrong with the file, we
-  // start fresh rather than crashing the whole CLI. Worst case the user
-  // sees an empty list and re-adds their profiles, which is recoverable.
+// Distinguish the three states of the registry file. "missing" is normal
+// (fresh install). "corrupt" means the file EXISTS but can't be parsed, and
+// that distinction matters: treating corrupt as empty and then writing would
+// permanently erase the user's profile list on the next `add` or `remove`.
+function readRegistryRaw() {
+  let raw;
   try {
-    const raw = fs.readFileSync(REGISTRY_PATH, "utf8");
-    const parsed = JSON.parse(raw);
-    if (!parsed.profiles || !Array.isArray(parsed.profiles)) {
-      return { ...EMPTY_REGISTRY };
-    }
-    return parsed;
+    raw = fs.readFileSync(REGISTRY_PATH, "utf8");
   } catch {
-    return { ...EMPTY_REGISTRY };
+    return { state: "missing", data: null };
   }
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && Array.isArray(parsed.profiles)) {
+      return { state: "ok", data: parsed };
+    }
+  } catch {
+    // fall through
+  }
+  return { state: "corrupt", data: null };
+}
+
+export function registryHealth() {
+  // Surfaced by `doctor`, `list`, and `status` so a corrupt file is loud
+  // rather than looking like "no profiles configured".
+  const { state } = readRegistryRaw();
+  return { state, path: REGISTRY_PATH };
+}
+
+export function getRegistry() {
+  // Always returns a valid object so read-only commands keep working.
+  // Corruption protection lives in saveRegistry, which refuses to write
+  // over a corrupt file.
+  const { state, data } = readRegistryRaw();
+  return state === "ok" ? data : { ...EMPTY_REGISTRY };
 }
 
 export function findProfile(name) {
@@ -53,6 +74,30 @@ export function findProfile(name) {
 // ---- Write -------------------------------------------------------------
 
 function saveRegistry(reg) {
+  const { state } = readRegistryRaw();
+
+  // Never write over a file we couldn't parse: it may still hold the user's
+  // real profile list (a hand-edit gone wrong is the typical cause), and one
+  // write here would make the loss permanent. Erroring out is recoverable;
+  // clobbering isn't. The cli's top-level handler prints this message.
+  if (state === "corrupt") {
+    throw new Error(
+      `The registry at ${REGISTRY_PATH} exists but is not valid JSON. ` +
+        `Refusing to overwrite it. Fix the JSON by hand (or restore ` +
+        `${REGISTRY_PATH}.bak if present), then re-run this command.`
+    );
+  }
+
+  // Keep one backup generation of the last known-good file so a bad write
+  // or bad hand-edit is a copy away from recovery.
+  if (state === "ok") {
+    try {
+      fs.copyFileSync(REGISTRY_PATH, REGISTRY_PATH + ".bak");
+    } catch {
+      // Best-effort; a failed backup shouldn't block the actual save.
+    }
+  }
+
   // Make sure the parent directory exists before writing. fs.mkdirSync with
   // recursive:true is idempotent, so re-running is fine.
   fs.mkdirSync(REGISTRY_DIR, { recursive: true });

@@ -15,7 +15,14 @@ import path from "node:path";
 // util.js - sanitization and path helpers
 // ---------------------------------------------------------------------------
 
-import { sanitizeName, titleCase, expandHome, tildify } from "../src/util.js";
+import { sanitizeName, titleCase, expandHome, tildify, compareVersions } from "../src/util.js";
+
+test("compareVersions: orders dotted versions numerically", () => {
+  assert.ok(compareVersions("0.1.9", "0.1.10") < 0, "9 < 10 numerically, not lexically");
+  assert.ok(compareVersions("0.1.11", "0.1.10") > 0);
+  assert.equal(compareVersions("1.2.3", "1.2.3"), 0);
+  assert.ok(compareVersions("1.0", "1.0.1") < 0, "missing parts read as zero");
+});
 
 test("sanitizeName: trims, lowercases, replaces unsafe chars with hyphens", () => {
   assert.equal(sanitizeName("  WORK  "), "work");
@@ -213,6 +220,56 @@ test("resyncDenyRules: drops stale rules when a profile goes away, and is idempo
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+test("resyncDenyRules: never overwrites a malformed settings.json", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-perm-"));
+  const a = tmpProfile("alpha", root);
+  const b = tmpProfile("beta", root);
+
+  // A trailing comma: real content, invalid JSON. One resync treating this
+  // as empty would replace the user's whole file with just our rules.
+  const broken = `{ "model": "opus", }`;
+  fs.writeFileSync(settingsPathFor(a.code.configDir), broken, "utf8");
+
+  const results = resyncDenyRules({ profiles: [a, b] });
+
+  const after = fs.readFileSync(settingsPathFor(a.code.configDir), "utf8");
+  assert.equal(after, broken, "malformed file must be byte-identical");
+  assert.ok(
+    results.some((r) => r.name === "alpha" && r.skipped === "malformed"),
+    "skip is reported"
+  );
+  // The healthy sibling still gets its rules.
+  assert.ok(
+    readSettings(b.code.configDir).permissions.deny.some((r) => r.includes(".claude-alpha"))
+  );
+
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("stripManagedDenyRules: removes our rules and marker, keeps the user's", async () => {
+  const { stripManagedDenyRules } = await import("../src/permissions.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-perm-"));
+  const a = tmpProfile("alpha", root);
+  const b = tmpProfile("beta", root);
+
+  // Seed managed rules, plus a user-authored rule on top.
+  resyncDenyRules({ profiles: [a, b] });
+  const p = settingsPathFor(a.code.configDir);
+  const s = JSON.parse(fs.readFileSync(p, "utf8"));
+  s.permissions.deny.push("Read(//etc/secrets/**)");
+  fs.writeFileSync(p, JSON.stringify(s), "utf8");
+
+  assert.equal(stripManagedDenyRules(a), true);
+  const after = JSON.parse(fs.readFileSync(p, "utf8"));
+  assert.deepEqual(after.permissions.deny, ["Read(//etc/secrets/**)"], "only user rule remains");
+  assert.ok(!("claudeMultiprofileManagedDeny" in after), "marker removed");
+
+  // Second strip is a no-op.
+  assert.equal(stripManagedDenyRules(a), false);
+
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test("auditDenyRules: reports drift when a managed rule is missing", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-perm-"));
   const a = tmpProfile("alpha", root);
@@ -229,4 +286,136 @@ test("auditDenyRules: reports drift when a managed rule is missing", () => {
   assert.ok(findings.every((f) => f.missing.length === 0), "no drift after resync");
 
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------------------
+// registry.js - corruption guard, backup, replaceProfile
+// ---------------------------------------------------------------------------
+//
+// registry.js captures XDG_CONFIG_HOME at first import, so we sandbox it
+// HERE, in module scope, before any test dynamically imports the module.
+// None of this file's static imports pull registry.js in (permissions.js
+// deliberately takes the registry as an argument), so the first load happens
+// inside a test, after this line has run.
+
+const REGISTRY_SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-reg-"));
+process.env.XDG_CONFIG_HOME = REGISTRY_SANDBOX;
+
+const registryFile = () =>
+  path.join(REGISTRY_SANDBOX, "claude-multiprofile", "profiles.json");
+
+test("registry: corrupt file reads as empty but refuses to be overwritten", async () => {
+  const reg = await import("../src/registry.js");
+
+  // Sanity: the sandbox took.
+  assert.equal(reg.registryLocation(), registryFile());
+
+  fs.mkdirSync(path.dirname(registryFile()), { recursive: true });
+  fs.writeFileSync(registryFile(), "{ this is not json", "utf8");
+
+  assert.equal(reg.registryHealth().state, "corrupt");
+  assert.equal(reg.getRegistry().profiles.length, 0, "read-only callers see empty");
+
+  // Any mutation must throw, not clobber.
+  assert.throws(
+    () => reg.addToRegistry({ name: "x", type: "code", code: null, desktop: null }),
+    /not valid JSON/
+  );
+  assert.equal(
+    fs.readFileSync(registryFile(), "utf8"),
+    "{ this is not json",
+    "corrupt file untouched"
+  );
+
+  fs.rmSync(registryFile());
+});
+
+test("registry: writes back up the previous good file, replaceProfile swaps in place", async () => {
+  const reg = await import("../src/registry.js");
+
+  const mk = (name) => ({ name, type: "code", code: { configDir: `/tmp/${name}` }, desktop: null });
+  reg.addToRegistry(mk("one"));
+  reg.addToRegistry(mk("two")); // second write: backs up the first
+  const bak = registryFile() + ".bak";
+  assert.ok(fs.existsSync(bak), ".bak created on rewrite");
+  assert.equal(JSON.parse(fs.readFileSync(bak, "utf8")).profiles.length, 1);
+
+  // replaceProfile keeps position and count.
+  reg.replaceProfile("one", mk("renamed"));
+  const profiles = reg.getRegistry().profiles;
+  assert.deepEqual(profiles.map((p) => p.name), ["renamed", "two"]);
+
+  fs.rmSync(path.dirname(registryFile()), { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------------------
+// rename.js - path planning
+// ---------------------------------------------------------------------------
+
+test("planRenamePaths: default-located paths move, custom paths stay", async () => {
+  const { planRenamePaths } = await import("../src/commands/rename.js");
+  const { defaultConfigDirFor, defaultAliasNameFor } = await import("../src/code.js");
+  const { defaultDataDirFor, defaultAppPathFor } = await import("../src/desktop.js");
+
+  // Everything at defaults: all four artifacts are planned for a move.
+  const allDefault = {
+    name: "old",
+    code: { configDir: defaultConfigDirFor("old"), aliasName: defaultAliasNameFor("old") },
+    desktop: { dataDir: defaultDataDirFor("old"), appPath: defaultAppPathFor("old") },
+  };
+  const moved = planRenamePaths(allDefault, "old", "new");
+  assert.equal(moved.plan.length, 4);
+  assert.equal(moved.newCode.configDir, defaultConfigDirFor("new"));
+  assert.equal(moved.newCode.aliasName, defaultAliasNameFor("new"));
+  assert.equal(moved.newDesktop.dataDir, defaultDataDirFor("new"));
+  assert.equal(moved.newDesktop.appPath, defaultAppPathFor("new"));
+
+  // Custom paths: nothing moves except nothing at all.
+  const allCustom = {
+    name: "old",
+    code: { configDir: "/opt/claude/work", aliasName: "cw" },
+    desktop: { dataDir: "/Volumes/X/claude", appPath: "/Volumes/X/Claude W.app" },
+  };
+  const kept = planRenamePaths(allCustom, "old", "new");
+  assert.equal(kept.plan.length, 0);
+  assert.equal(kept.newCode.configDir, "/opt/claude/work");
+  assert.equal(kept.newDesktop.appPath, "/Volumes/X/Claude W.app");
+});
+
+// ---------------------------------------------------------------------------
+// claudebin.js - which output parsing
+// ---------------------------------------------------------------------------
+
+import { parseWhichOutput } from "../src/claudebin.js";
+
+test("parseWhichOutput: preserves order, drops duplicates and blanks", () => {
+  const out = "/a/claude\n/b/claude\n/a/claude\n\n  \n/c/claude\n";
+  assert.deepEqual(parseWhichOutput(out), ["/a/claude", "/b/claude", "/c/claude"]);
+  assert.deepEqual(parseWhichOutput(""), []);
+});
+
+// ---------------------------------------------------------------------------
+// shell.js - empty managed block removal
+// ---------------------------------------------------------------------------
+
+test("writeAliases with an empty list removes the managed block entirely", async (t) => {
+  const rc = rcPathForShell("zsh");
+  const original = fs.existsSync(rc) ? fs.readFileSync(rc, "utf8") : null;
+  t.after(() => {
+    if (original === null) {
+      try { fs.unlinkSync(rc); } catch {}
+    } else {
+      fs.writeFileSync(rc, original, "utf8");
+    }
+  });
+
+  writeAliases("zsh", [`alias claude-x='CLAUDE_CONFIG_DIR="$HOME/.claude-x" claude'`]);
+  assert.equal(readManagedAliases("zsh").length, 1);
+
+  // Removing the last alias should take the whole block, markers included.
+  writeAliases("zsh", []);
+  const content = fs.readFileSync(rc, "utf8");
+  assert.ok(!content.includes("# >>> claude-multiprofile >>>"), "start marker gone");
+  assert.ok(!content.includes("# <<< claude-multiprofile <<<"), "end marker gone");
+  assert.equal(readManagedAliases("zsh").length, 0);
 });

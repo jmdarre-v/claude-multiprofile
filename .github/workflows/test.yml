@@ -17,8 +17,8 @@ jobs:
       fail-fast: false
       matrix:
         # package.json declares engines.node >= 18, so we verify the floor
-        # and the two current LTS lines above it.
-        node: ["18", "20", "22"]
+        # (EOL but still supported by us) through current LTS.
+        node: ["18", "20", "22", "24"]
     steps:
       - uses: actions/checkout@v4
 
@@ -27,7 +27,7 @@ jobs:
           node-version: ${{ matrix.node }}
 
       - name: Install dependencies
-        run: npm ci || npm install
+        run: npm ci
 
       - name: Run tests
         run: npm test

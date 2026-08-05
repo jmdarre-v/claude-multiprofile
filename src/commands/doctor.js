@@ -22,9 +22,15 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { getRegistry, registryLocation } from "../registry.js";
+import { getRegistry, registryLocation, registryHealth } from "../registry.js";
 import { detectDefaults } from "../detect.js";
 import { resolveClaude } from "../claudebin.js";
+import {
+  getBundleId,
+  setBundleId,
+  uniqueBundleId,
+  DEFAULT_APPLET_BUNDLE_ID,
+} from "../desktop.js";
 import { resyncDenyRules, auditDenyRules } from "../permissions.js";
 import { detectShell, rcPathForShell, readManagedAliases } from "../shell.js";
 import {
@@ -40,6 +46,8 @@ import {
   fileExists,
   command,
   dim,
+  isMac,
+  compareVersions,
 } from "../util.js";
 
 const PKG_NAME = "claude-multiprofile";
@@ -164,10 +172,13 @@ function checkOwnVersion(t, currentVersion) {
     return;
   }
 
-  if (latest && latest !== currentVersion) {
+  const cmp = compareVersions(currentVersion, latest);
+  if (cmp < 0) {
     warn(`A newer version is available: ${latest}`);
     info(`Upgrade with ${command("claude-multiprofile upgrade")}`);
     t.warnings++;
+  } else if (cmp > 0) {
+    info(`Ahead of npm (${latest} published): running an unreleased build.`);
   } else {
     ok("Up to date.");
   }
@@ -238,6 +249,60 @@ function checkProfiles(t, reg) {
   }
 }
 
+// ---- Check: launcher bundle IDs --------------------------------------------
+//
+// The v0.1.9 bug class: every osacompile'd launcher shares the default
+// AppleScript bundle identifier, so LaunchServices treats all profile
+// launchers as the same app and Dock double-clicks stop resolving. Profiles
+// created before v0.1.9 still carry the default ID unless `repair` was run.
+// This check finds them; --fix restamps and re-registers on the spot.
+
+const LSREGISTER =
+  "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+
+function checkLauncherBundleIds(t, reg, fix) {
+  if (!isMac()) return;
+  const launchers = reg.profiles.filter(
+    (p) => p.desktop && p.desktop.appPath && fileExists(p.desktop.appPath)
+  );
+  if (launchers.length === 0) return;
+
+  step("Launcher bundle IDs");
+
+  for (const p of launchers) {
+    const id = getBundleId(p.desktop.appPath);
+    if (id === null) {
+      warn(`${p.name}: could not read the launcher's Info.plist.`);
+      t.warnings++;
+      continue;
+    }
+    if (id !== DEFAULT_APPLET_BUNDLE_ID) {
+      ok(`${p.name}: ${dim(id)}`);
+      continue;
+    }
+    // Still on the colliding default.
+    warn(`${p.name}: launcher still has the default AppleScript bundle ID.`);
+    info("  With two or more launchers like this, Dock double-clicks can stop working.");
+    if (fix) {
+      const newId = uniqueBundleId(p.name);
+      if (setBundleId(p.desktop.appPath, newId)) {
+        try {
+          execFileSync(LSREGISTER, ["-f", p.desktop.appPath], { stdio: "pipe" });
+        } catch {
+          // Restamping alone still fixes the collision on next registration.
+        }
+        ok(`  Repaired: restamped as ${newId} and re-registered.`);
+      } else {
+        err("  Could not rewrite the bundle ID.");
+        t.problems++;
+      }
+    } else {
+      info(`  Repair with ${command("claude-multiprofile doctor --fix")} or ${command(`claude-multiprofile repair ${p.name}`)}`);
+      t.warnings++;
+    }
+  }
+}
+
 // ---- Check: cross-profile read protection (issue #4) -----------------------
 
 function checkDenyRules(t, reg, fix) {
@@ -292,10 +357,21 @@ export async function doctor(args = []) {
     // Non-fatal; the version check will just report "unknown".
   }
 
+  // A corrupt registry first: every later check reads from it, and a corrupt
+  // file otherwise masquerades as "no profiles configured".
+  if (registryHealth().state === "corrupt") {
+    step("Registry");
+    err(`${tildify(registryLocation())} exists but is not valid JSON.`);
+    info("Profiles are configured but can't be read. Mutating commands will refuse to run.");
+    info(`Fix the JSON by hand; a last-known-good copy may exist at ${tildify(registryLocation())}.bak`);
+    t.problems++;
+  }
+
   checkClaudeBinary(t);
   checkBrokenInstalls(t);
   checkOwnVersion(t, currentVersion);
   checkProfiles(t, reg);
+  checkLauncherBundleIds(t, reg, fix);
   checkDenyRules(t, reg, fix);
 
   // ---- Summary -------------------------------------------------------------

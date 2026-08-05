@@ -66,6 +66,44 @@ function moveDir(from, to) {
   return true;
 }
 
+// Work out which paths a rename moves. Pure so it can be unit-tested: we only
+// move a directory if it currently sits at the DEFAULT location for the old
+// name. If the user chose a custom path, we leave it exactly where it is,
+// since they picked it deliberately and it likely doesn't encode the name.
+export function planRenamePaths(profile, oldName, newName) {
+  const plan = [];
+  const newCode = profile.code ? { ...profile.code } : null;
+  const newDesktop = profile.desktop ? { ...profile.desktop } : null;
+
+  if (profile.code) {
+    const defaultOld = defaultConfigDirFor(oldName);
+    if (profile.code.configDir === defaultOld) {
+      newCode.configDir = defaultConfigDirFor(newName);
+      plan.push(["Code config", profile.code.configDir, newCode.configDir]);
+    }
+    // The alias is always renamed if it followed the default pattern.
+    if (profile.code.aliasName === defaultAliasNameFor(oldName)) {
+      newCode.aliasName = defaultAliasNameFor(newName);
+      plan.push(["Shell alias", profile.code.aliasName, newCode.aliasName]);
+    }
+  }
+
+  if (profile.desktop) {
+    const defaultOldData = defaultDataDirFor(oldName);
+    if (profile.desktop.dataDir === defaultOldData) {
+      newDesktop.dataDir = defaultDataDirFor(newName);
+      plan.push(["Desktop data", profile.desktop.dataDir, newDesktop.dataDir]);
+    }
+    const defaultOldApp = defaultAppPathFor(oldName);
+    if (profile.desktop.appPath === defaultOldApp) {
+      newDesktop.appPath = defaultAppPathFor(newName);
+      plan.push(["Launcher app", profile.desktop.appPath, newDesktop.appPath]);
+    }
+  }
+
+  return { newCode, newDesktop, plan };
+}
+
 export async function rename(args = []) {
   header("Rename a profile");
 
@@ -123,40 +161,8 @@ export async function rename(args = []) {
   }
 
   // ---- Work out the new paths ---------------------------------------------
-  //
-  // We only move a directory if it currently sits at the DEFAULT location for
-  // the old name. If the user chose a custom path, we leave it exactly where
-  // it is, since they picked it deliberately and it likely doesn't encode the name.
 
-  const plan = [];
-  let newCode = profile.code ? { ...profile.code } : null;
-  let newDesktop = profile.desktop ? { ...profile.desktop } : null;
-
-  if (profile.code) {
-    const defaultOld = defaultConfigDirFor(oldName);
-    if (profile.code.configDir === defaultOld) {
-      newCode.configDir = defaultConfigDirFor(newName);
-      plan.push(["Code config", profile.code.configDir, newCode.configDir]);
-    }
-    // The alias is always renamed if it followed the default pattern.
-    if (profile.code.aliasName === defaultAliasNameFor(oldName)) {
-      newCode.aliasName = defaultAliasNameFor(newName);
-      plan.push(["Shell alias", profile.code.aliasName, newCode.aliasName]);
-    }
-  }
-
-  if (profile.desktop) {
-    const defaultOldData = defaultDataDirFor(oldName);
-    if (profile.desktop.dataDir === defaultOldData) {
-      newDesktop.dataDir = defaultDataDirFor(newName);
-      plan.push(["Desktop data", profile.desktop.dataDir, newDesktop.dataDir]);
-    }
-    const defaultOldApp = defaultAppPathFor(oldName);
-    if (profile.desktop.appPath === defaultOldApp) {
-      newDesktop.appPath = defaultAppPathFor(newName);
-      plan.push(["Launcher app", profile.desktop.appPath, newDesktop.appPath]);
-    }
-  }
+  const { newCode, newDesktop, plan } = planRenamePaths(profile, oldName, newName);
 
   // ---- Show the plan and confirm ------------------------------------------
 

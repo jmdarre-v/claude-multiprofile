@@ -124,9 +124,11 @@ It checks:
 - **Which `claude` wins on PATH**, its version, and any shadowed copies. Every profile shares one binary, so a duplicate from another Node version is a common cause of "I upgraded and nothing changed."
 - **Broken npm installs.** A package directory left with `node_modules/` but no `package.json` silently de-registers the command and lets PATH fall through to an older copy.
 - **Directory collisions.** A profile pointing at another tool's data folder (`~/.claude-mem`, `~/.claude-profiles`), or two profiles sharing one directory.
+- **Launcher bundle IDs.** Launchers created before v0.1.9 still carry the default AppleScript bundle identifier; with two or more of them, macOS confuses the launchers and Dock double-clicks stop working.
+- **A corrupt registry file.** A registry that exists but isn't valid JSON otherwise masquerades as "no profiles configured". Mutating commands refuse to run until it's fixed, and every write keeps a `.bak` of the last good version next to it.
 - **Cross-profile read protection** drift (see [Profile isolation](#profile-isolation) below).
 
-`--fix` repairs what's safe to repair automatically (currently the deny-rule drift). Everything else is reported with the command to run.
+`--fix` repairs what's safe to repair automatically: deny-rule drift and default bundle IDs. Everything else is reported with the command to run.
 
 ### `claude-multiprofile rename [old] [new]`
 
@@ -158,7 +160,7 @@ Restart Claude Desktop after running this for the new extensions to load.
 
 This command does not apply to Code-only profiles (extensions are a Desktop concept).
 
-### `claude-multiprofile repair <name>`
+### `claude-multiprofile repair [name]`
 
 Re-registers a profile's launcher .app with macOS LaunchServices. Use this if the Dock icon stops responding to double-clicks even though the .app bundle is intact and `open path/to/Claude\ Work.app` from the terminal still works.
 

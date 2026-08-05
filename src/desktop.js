@@ -141,6 +141,24 @@ export function uniqueBundleId(name) {
   return `com.claude-multiprofile.${safe}`;
 }
 
+// The identifier every osacompile'd bundle ships with until we stamp our own.
+// Launchers still carrying it were created before v0.1.9 (or hand-built) and
+// are exposed to the LaunchServices collision bug. `doctor` looks for it.
+export const DEFAULT_APPLET_BUNDLE_ID = "com.apple.ScriptEditor.id.applet";
+
+export function getBundleId(appPath) {
+  const plist = path.join(appPath, "Contents", "Info.plist");
+  if (!fileExists(plist)) return null;
+  try {
+    return execFileSync(PLIST_BUDDY, ["-c", "Print :CFBundleIdentifier", plist], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
 export function setBundleId(appPath, bundleId) {
   // PlistBuddy needs the literal Info.plist path, not the .app path.
   const plist = path.join(appPath, "Contents", "Info.plist");

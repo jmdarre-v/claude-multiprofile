@@ -151,6 +151,18 @@ export function sanitizeName(name) {
     .replace(/-{2,}/g, "-");
 }
 
+export function compareVersions(a, b) {
+  // Numeric dotted-version compare: negative if a < b, 0 if equal, positive
+  // if a > b. Enough for our x.y.z versions; no prerelease handling needed.
+  const pa = String(a).split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = String(b).split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
 export function titleCase(name) {
   // Used when building the display name of the .app, so "work" -> "WORK"
   // for short tokens and "client-acme" -> "Client Acme" for hyphenated ones.

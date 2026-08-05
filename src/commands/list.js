@@ -12,7 +12,7 @@
 // the default section, an empty registry just says "nothing here" and
 // can feel like the tool is broken.
 
-import { getRegistry, registryLocation } from "../registry.js";
+import { getRegistry, registryLocation, registryHealth } from "../registry.js";
 import { detectDefaults } from "../detect.js";
 import { resolveClaude } from "../claudebin.js";
 import { header, info, warn, pathStr, tildify, command, dim } from "../util.js";
@@ -22,6 +22,12 @@ export async function list() {
 
   const defaults = detectDefaults();
   const reg = getRegistry();
+
+  if (registryHealth().state === "corrupt") {
+    warn(`The registry at ${pathStr(tildify(registryLocation()))} is not valid JSON.`);
+    info("Profiles below may be incomplete. Fix the JSON by hand (a .bak may sit next to it).");
+    console.log("");
+  }
 
   // ---- Section 1: default install ----------------------------------------
 

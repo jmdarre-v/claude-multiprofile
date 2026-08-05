@@ -115,6 +115,17 @@ export function writeAliases(shell, aliasLines) {
   const content = readRcFile(rcPath);
   const { before, after, hasBlock } = extractBlock(content);
 
+  // No aliases left (last Code profile removed): take the whole managed
+  // block out rather than leaving an empty marker pair in the rc file.
+  if (aliasLines.length === 0) {
+    if (hasBlock) {
+      const next =
+        before.replace(/\s*$/, "") + after.replace(/^\s*/, "\n");
+      fs.writeFileSync(rcPath, next.replace(/^\n+/, "") , "utf8");
+    }
+    return rcPath;
+  }
+
   const block = [
     BLOCK_START,
     "# Managed by claude-multiprofile. Edits inside this block may be overwritten.",

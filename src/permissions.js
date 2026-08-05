@@ -24,7 +24,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { ok, info, dim, tildify, fileExists } from "./util.js";
+import { ok, warn, info, dim, tildify, fileExists } from "./util.js";
 
 // The settings key we own. Anything listed here was written by us and is safe
 // to remove on the next resync; rules outside this list belong to the user.
@@ -63,15 +63,31 @@ function managedRulesForProfile(profile, allProfiles) {
   return rules.sort();
 }
 
+// Read a settings.json distinguishing three cases: missing (fine, start
+// empty), valid JSON object (use it), and PRESENT BUT MALFORMED. The last one
+// is the dangerous case: if we treated it as empty and wrote our rules back,
+// we would silently replace whatever the user had in there (a stray trailing
+// comma or a JSONC-style comment is all it takes). Malformed files are
+// therefore never written to; callers skip and warn instead.
 function readSettings(p) {
+  let raw;
   try {
-    const parsed = JSON.parse(fs.readFileSync(p, "utf8"));
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed
-      : {};
+    raw = fs.readFileSync(p, "utf8");
   } catch {
-    return {};
+    return { settings: {}, malformed: false }; // missing: safe to create
   }
+  if (raw.trim() === "") {
+    return { settings: {}, malformed: false }; // empty file: nothing to lose
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return { settings: parsed, malformed: false };
+    }
+  } catch {
+    // fall through
+  }
+  return { settings: null, malformed: true };
 }
 
 function writeSettings(p, obj) {
@@ -87,7 +103,12 @@ function resyncOne(profile, allProfiles) {
   if (!fileExists(configDir)) return null;
 
   const settingsPath = settingsPathFor(configDir);
-  const settings = readSettings(settingsPath);
+  const { settings, malformed } = readSettings(settingsPath);
+  if (malformed) {
+    // Never write over a file we couldn't parse. Report it so the resync
+    // summary can tell the user to fix the JSON by hand.
+    return { name: profile.name, settingsPath, skipped: "malformed" };
+  }
   const prevManaged = Array.isArray(settings[MARKER_KEY]) ? settings[MARKER_KEY] : [];
   const managed = managedRulesForProfile(profile, allProfiles);
 
@@ -127,9 +148,11 @@ export function resyncDenyRules(registry, opts = {}) {
     const r = resyncOne(p, profiles);
     if (r) results.push(r);
   }
-  if (opts.verbose && results.length > 0) {
+  const updated = results.filter((r) => !r.skipped);
+  const skipped = results.filter((r) => r.skipped === "malformed");
+  if (opts.verbose && updated.length > 0) {
     ok("Updated cross-profile read-protection:");
-    for (const r of results) {
+    for (const r of updated) {
       info(
         `  ${r.name}: ${r.ruleCount} rule${r.ruleCount === 1 ? "" : "s"} ${dim(
           `(${tildify(r.settingsPath)})`
@@ -137,7 +160,44 @@ export function resyncDenyRules(registry, opts = {}) {
       );
     }
   }
+  // A skipped file is a safety event, not a routine one: always surface it,
+  // even when the caller asked for quiet output.
+  for (const r of skipped) {
+    warn(
+      `Skipped ${r.name}: ${tildify(r.settingsPath)} is not valid JSON, so it was left untouched.`
+    );
+    info("  Fix the JSON by hand, then run `claude-multiprofile doctor --fix`.");
+  }
   return results;
+}
+
+// Remove OUR managed rules (and the marker) from one profile's settings.json,
+// leaving everything the user wrote intact. Called by `remove` when the
+// profile leaves the registry but its config folder stays on disk: without
+// this, the folder would keep deny rules aimed at profiles it no longer has
+// any relationship with.
+export function stripManagedDenyRules(profile) {
+  if (!profile.code || !profile.code.configDir) return false;
+  if (!fileExists(profile.code.configDir)) return false;
+
+  const settingsPath = settingsPathFor(profile.code.configDir);
+  const { settings, malformed } = readSettings(settingsPath);
+  if (malformed) {
+    warn(`${tildify(settingsPath)} is not valid JSON; left untouched.`);
+    return false;
+  }
+  const prevManaged = Array.isArray(settings[MARKER_KEY]) ? settings[MARKER_KEY] : [];
+  if (prevManaged.length === 0) return false;
+
+  const prevSet = new Set(prevManaged);
+  if (settings.permissions && Array.isArray(settings.permissions.deny)) {
+    settings.permissions.deny = settings.permissions.deny.filter(
+      (r) => !prevSet.has(r)
+    );
+  }
+  delete settings[MARKER_KEY];
+  writeSettings(settingsPath, settings);
+  return true;
 }
 
 // Read-only inspection for `doctor`: does each Code profile's settings.json
@@ -150,11 +210,21 @@ export function auditDenyRules(registry) {
     const expected = managedRulesForProfile(p, profiles);
     if (expected.length === 0) continue;
     const settingsPath = settingsPathFor(p.code.configDir);
-    const settings = readSettings(settingsPath);
+    const { settings, malformed } = readSettings(settingsPath);
+    if (malformed) {
+      findings.push({
+        name: p.name,
+        settingsPath,
+        expected: expected.length,
+        missing: expected,
+        malformed: true,
+      });
+      continue;
+    }
     const deny = new Set(
-      (settings.permissions && Array.isArray(settings.permissions.deny)
+      settings.permissions && Array.isArray(settings.permissions.deny)
         ? settings.permissions.deny
-        : []).map((r) => r)
+        : []
     );
     const missing = expected.filter((r) => !deny.has(r));
     findings.push({
