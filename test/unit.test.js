@@ -508,6 +508,44 @@ test("launcherCodeConfigDir: reads the env back out of a real compiled launcher"
 });
 
 // ---------------------------------------------------------------------------
+// add.js - completing a half-built profile
+// ---------------------------------------------------------------------------
+//
+// The case: a Desktop-only profile created before the user cared about Claude
+// Code. `add` used to refuse the name outright, leaving no way to finish the
+// profile. Now an existing name is only an error when there is genuinely
+// nothing left to add.
+
+test("missingTargets: an existing name is only taken when nothing is left to add", async () => {
+  const { missingTargets } = await import("../src/commands/add.js");
+  const desktopOnly = { name: "ipsy", desktop: {}, code: null };
+  const codeOnly = { name: "work", desktop: null, code: {} };
+  const both = { name: "full", desktop: {}, code: {} };
+
+  // The reported case: Desktop profile exists, user asks for Code.
+  assert.deepEqual(
+    missingTargets(desktopOnly, { wantsDesktop: false, wantsCode: true }),
+    ["code"]
+  );
+  // Asking for both should link only the half that is missing.
+  assert.deepEqual(
+    missingTargets(desktopOnly, { wantsDesktop: true, wantsCode: true }),
+    ["code"]
+  );
+  assert.deepEqual(
+    missingTargets(codeOnly, { wantsDesktop: true, wantsCode: true }),
+    ["desktop"]
+  );
+  // Nothing missing means the name really is taken.
+  assert.deepEqual(missingTargets(both, { wantsDesktop: true, wantsCode: true }), []);
+  assert.deepEqual(
+    missingTargets(desktopOnly, { wantsDesktop: true, wantsCode: false }),
+    [],
+    "asking only for the half it already has is a genuine collision"
+  );
+});
+
+// ---------------------------------------------------------------------------
 // claudebin.js - which output parsing
 // ---------------------------------------------------------------------------
 

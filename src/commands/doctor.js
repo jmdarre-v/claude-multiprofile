@@ -327,9 +327,22 @@ function checkLauncherEnv(t, reg, fix) {
       p.code &&
       p.code.configDir
   );
-  if (candidates.length === 0) return;
+  // Desktop profiles with no Code target at all. Not a fault (Desktop-only is
+  // a legitimate choice), but it surprises people: Claude Code opened from
+  // inside such a profile uses the shared ~/.claude, so it is worth naming.
+  // Informational only, so it stays out of the problem and warning tallies.
+  const desktopOnly = reg.profiles.filter((p) => p.desktop && !p.code);
+
+  if (candidates.length === 0 && desktopOnly.length === 0) return;
 
   step("Desktop-spawned Claude Code");
+
+  for (const p of desktopOnly) {
+    info(`${p.name}: Desktop only, so Claude Code opened inside it uses ${tildify(DEFAULT_CLAUDE_CONFIG_DIR)}.`);
+    console.log(
+      `      ${dim(`Give it its own with ${command("claude-multiprofile add")}, choosing Claude Code and the name "${p.name}".`)}`
+    );
+  }
 
   for (const p of candidates) {
     const current = launcherCodeConfigDir(p.desktop.appPath);

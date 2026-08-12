@@ -3,6 +3,26 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## 0.1.15 (2026-08-09)
+
+### Added
+
+- `add` can complete a half-built profile. Entering an existing name is now
+  only an error when the profile already has everything you selected. If it
+  is missing the half you picked (the common case being a Desktop profile
+  created before you cared about isolating Claude Code), `add` offers to link
+  the missing half onto it instead of refusing the name.
+
+  Linking Claude Code onto an existing Desktop profile also **rebuilds the
+  Desktop launcher**, because the `CLAUDE_CONFIG_DIR` it exports is compiled
+  into the launcher at creation time. Without that step the link would look
+  successful while Desktop kept spawning Claude Code against the shared
+  `~/.claude`. Existing chats, logins, and settings are untouched.
+- `doctor` reports Desktop-only profiles and names the consequence: Claude
+  Code opened from inside them uses the shared `~/.claude`. Informational
+  only, since Desktop-only is a legitimate choice, so it does not count as a
+  problem or a warning.
+
 ## 0.1.14 (2026-08-05)
 
 ### Added

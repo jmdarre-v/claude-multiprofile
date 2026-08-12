@@ -109,6 +109,8 @@ Interactive wizard. Walks through:
 
 Then prints a plan, asks for confirmation, and applies.
 
+**Completing a half-built profile.** If you enter a name that already exists but is missing the half you selected, `add` offers to link it rather than refusing. Set up a Desktop profile months ago and only now want its Claude Code isolated too? Run `add`, choose Claude Code, and give it the existing name. It creates the config folder and alias, then **rebuilds the Desktop launcher** so the app points Claude Code at the new folder. Without that rebuild the link would be cosmetic and Desktop would keep spawning the shared `~/.claude`. Your existing chats, login, and settings are untouched.
+
 The wizard refuses to claim a directory that belongs to something else. The names `mem`, `profiles`, `multiprofile`, `code`, and `desktop` are reserved outright, since each would collide with another tool's folder or this tool's own config. Beyond that, if the folder you pick already exists and is not already registered here, you get a warning describing what is in there and a chance to back out. This stops a profile named `mem` from quietly pointing at `~/.claude-mem` and, later, a `remove` from offering to delete another tool's data.
 
 ### `claude-multiprofile list`

@@ -12,11 +12,13 @@
 //   3. Confirmation, execution, and printed next steps
 
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { input, select, confirm } from "@inquirer/prompts";
 import {
   HOME,
   ok,
   warn,
+  err,
   info,
   step,
   header,
@@ -30,14 +32,19 @@ import {
   sanitizeName,
   titleCase,
 } from "../util.js";
-import { findProfile, addToRegistry, getRegistry } from "../registry.js";
+import { findProfile, addToRegistry, getRegistry, replaceProfile } from "../registry.js";
 import { resyncDenyRules } from "../permissions.js";
 import {
   findClaudeApp,
   defaultDataDirFor,
   defaultAppPathFor,
   setupDesktop,
+  compileApp,
+  copyClaudeIcon,
 } from "../desktop.js";
+
+const LSREGISTER =
+  "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
 import {
   defaultConfigDirFor,
   defaultAliasNameFor,
@@ -60,6 +67,15 @@ const RESERVED_NAMES = {
   code: "reserved (~/.claude-code)",
   desktop: "reserved (~/.claude-desktop)",
 };
+
+// Which of the selected targets this profile does not have yet. Empty means
+// there is nothing to link and the name really is taken.
+export function missingTargets(profile, { wantsDesktop, wantsCode }) {
+  const missing = [];
+  if (wantsDesktop && !profile.desktop) missing.push("desktop");
+  if (wantsCode && !profile.code) missing.push("code");
+  return missing;
+}
 
 // A directory we're about to claim is only safe if it doesn't already exist,
 // OR it exists and is already registered to this tool. Anything else is
@@ -135,14 +151,33 @@ export async function add() {
       if (cleaned !== v.trim().toLowerCase()) {
         return `Use lowercase letters, numbers, and hyphens only. Suggestion: "${cleaned}"`;
       }
-      if (findProfile(cleaned)) return `Profile "${cleaned}" already exists.`;
       if (RESERVED_NAMES[cleaned]) {
         return `"${cleaned}" is reserved. It would collide with ${RESERVED_NAMES[cleaned]}. Pick another name.`;
+      }
+      // An existing name is only an error when there is nothing left to add.
+      // A Desktop-only profile that needs Claude Code (or the reverse) is a
+      // half-built profile, and completing it is the whole point of linking.
+      const existing = findProfile(cleaned);
+      if (existing && !missingTargets(existing, { wantsDesktop, wantsCode }).length) {
+        return `Profile "${cleaned}" already exists with everything you selected.`;
       }
       return true;
     },
   });
   const name = sanitizeName(rawName);
+
+  // ---- Phase 2.5: completing an existing profile -------------------------
+  //
+  // The name matched a profile that is missing one half. Offer to link the
+  // missing half onto it rather than making the user invent a second name,
+  // which is what leaves people with a Desktop profile whose Claude Code
+  // sessions quietly run against the shared ~/.claude.
+
+  const existing = findProfile(name);
+  if (existing) {
+    const missing = missingTargets(existing, { wantsDesktop, wantsCode });
+    return linkExisting(existing, missing);
+  }
 
   // ---- Phase 2a: Desktop questions -------------------------------------
 
@@ -239,6 +274,154 @@ export async function add() {
   // ---- Final guidance -------------------------------------------------
 
   printNextSteps({ name, desktopResult, codeResult });
+}
+
+// ===========================================================================
+// Linking a missing half onto an existing profile
+// ===========================================================================
+//
+// The case this exists for: you set up a Desktop profile months ago, and only
+// later realise that Claude Code launched from inside it is using the shared
+// ~/.claude. Before this, `add` refused the name and there was no way to
+// complete the profile short of removing and rebuilding it.
+//
+// Linking Code onto a Desktop profile is NOT just creating a config dir. The
+// launcher has to be rebuilt too, because the CLAUDE_CONFIG_DIR it exports is
+// baked into the compiled AppleScript at creation time. Skip that and the
+// link looks successful while Desktop keeps spawning the shared CLI, which is
+// exactly the invisible failure we are trying to remove.
+
+async function linkExisting(profile, missing) {
+  step(`Completing the existing profile "${profile.name}"`);
+
+  const has = [profile.desktop && "Claude Desktop", profile.code && "Claude Code"]
+    .filter(Boolean)
+    .join(" and ");
+  const adding = missing.map((m) => (m === "desktop" ? "Claude Desktop" : "Claude Code")).join(" and ");
+
+  info(`It currently has: ${has}`);
+  info(`Missing: ${adding}`);
+  console.log("");
+
+  if (missing.includes("code") && profile.desktop) {
+    explain(`
+      Right now, Claude Code started from inside this Desktop profile falls
+      back to your shared ~/.claude, so its CLAUDE.md, settings, and project
+      memory are the same ones your other profiles use.
+
+      Linking gives it its own config folder and rebuilds the launcher so the
+      Desktop app points Claude Code at it. Your Desktop chats, login, and
+      settings are untouched.
+    `);
+  }
+
+  const proceed = await confirm({
+    message: `Add ${adding} to "${profile.name}"?`,
+    default: true,
+  });
+  if (!proceed) {
+    warn("Cancelled. Nothing was changed.");
+    return;
+  }
+
+  // ---- Gather config for the missing half only ---------------------------
+
+  let desktopConfig = null;
+  let codeConfig = null;
+  if (missing.includes("desktop")) {
+    if (!isMac()) {
+      warn(`Claude Desktop setup requires macOS. Detected: ${process.platform}.`);
+      return;
+    }
+    desktopConfig = await askDesktopQuestions(profile.name);
+    if (!desktopConfig) {
+      warn("Cancelled. Nothing was changed.");
+      return;
+    }
+  }
+  if (missing.includes("code")) {
+    codeConfig = await askCodeQuestions(profile.name);
+    if (!codeConfig) return; // user declined to claim an existing folder
+  }
+
+  // ---- Apply --------------------------------------------------------------
+
+  const next = { ...profile };
+
+  if (codeConfig) {
+    const codeResult = setupCode(codeConfig);
+    next.code = {
+      configDir: codeResult.configDir,
+      aliasName: codeResult.aliasName,
+      shell: codeResult.shell,
+      rcPath: codeResult.rcPath,
+    };
+  }
+
+  if (desktopConfig) {
+    // New launcher: pass the config dir straight in, whether it was already
+    // there or we just created it.
+    const desktopResult = setupDesktop({
+      ...desktopConfig,
+      codeConfigDir: next.code ? next.code.configDir : undefined,
+    });
+    next.desktop = {
+      dataDir: desktopResult.dataDir,
+      appPath: desktopResult.appPath,
+      claudeAppPath: desktopResult.claudeAppPath,
+    };
+  } else if (next.code && profile.desktop) {
+    // Existing launcher, newly linked Code target: the launcher must be
+    // rebuilt so it exports CLAUDE_CONFIG_DIR. Without this the link is
+    // cosmetic.
+    step("Rebuilding the Desktop launcher");
+    if (!fileExists(profile.desktop.claudeAppPath)) {
+      err(`Claude.app not found at ${profile.desktop.claudeAppPath}; cannot rebuild the launcher.`);
+      info(`Fix that, then run ${command("claude-multiprofile doctor --fix")}.`);
+    } else {
+      try {
+        compileApp({
+          name: profile.name,
+          dataDir: profile.desktop.dataDir,
+          appPath: profile.desktop.appPath,
+          claudeAppPath: profile.desktop.claudeAppPath,
+          codeConfigDir: next.code.configDir,
+        });
+        copyClaudeIcon(profile.desktop.appPath, profile.desktop.claudeAppPath);
+        try {
+          execFileSync(LSREGISTER, ["-f", profile.desktop.appPath], { stdio: "pipe" });
+        } catch {
+          // Non-fatal; the bundle works, registration catches up.
+        }
+        ok("Launcher rebuilt. Claude Code opened from this Desktop profile now uses its own config.");
+      } catch (e) {
+        err(`Could not rebuild the launcher: ${e.message}`);
+        info(`Run ${command("claude-multiprofile doctor --fix")} to retry.`);
+      }
+    }
+  }
+
+  next.type = next.desktop && next.code ? "both" : next.desktop ? "desktop" : "code";
+  replaceProfile(profile.name, next);
+  resyncDenyRules(getRegistry(), { verbose: true });
+
+  console.log("");
+  ok(`Profile "${profile.name}" now has Claude Desktop and Claude Code linked.`);
+
+  if (codeConfig) {
+    console.log("");
+    info("Activate the shell alias in this terminal:");
+    console.log("  " + command(`source ${tildify(next.code.rcPath)}`));
+    console.log("");
+    info("Then launch the profile's Claude Code with:");
+    console.log("  " + command(next.code.aliasName));
+    explain(`
+      On first run, use /login inside the REPL to sign in for this profile.
+
+      If the Desktop app is open, quit and reopen it so it picks up the
+      rebuilt launcher.
+    `);
+  }
 }
 
 // ===========================================================================
