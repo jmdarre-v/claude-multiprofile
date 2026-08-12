@@ -113,6 +113,16 @@ Then prints a plan, asks for confirmation, and applies.
 
 The wizard refuses to claim a directory that belongs to something else. The names `mem`, `profiles`, `multiprofile`, `code`, and `desktop` are reserved outright, since each would collide with another tool's folder or this tool's own config. Beyond that, if the folder you pick already exists and is not already registered here, you get a warning describing what is in there and a chance to back out. This stops a profile named `mem` from quietly pointing at `~/.claude-mem` and, later, a `remove` from offering to delete another tool's data.
 
+**Optional: a separate GitHub CLI login.** If `gh` is installed, `add` offers to give the profile its own GitHub account. `gh` honors `GH_CONFIG_DIR` the same way Claude Code honors `CLAUDE_CONFIG_DIR`, so the profile gets its own `hosts.yml` at `~/.claude-{name}/gh` and every `gh` command Claude runs inside that profile acts as that account. Useful when a profile maps to a client or employer with its own GitHub org.
+
+Off by default, since one GitHub identity across all your Claude profiles is what most setups want. After enabling it, sign in once:
+
+```bash
+GH_CONFIG_DIR=~/.claude-work/gh gh auth login
+```
+
+The folder lives inside the profile, so `rename` moves it and `remove` deletes it without any extra step. One caveat `doctor` will warn you about: if `GH_TOKEN` or `GITHUB_TOKEN` is exported in your shell, `gh` prefers it over any config directory and every profile will use that token regardless.
+
 ### `claude-multiprofile list`
 
 Prints every configured profile with its paths and creation date, plus the `claude` binary currently winning on your PATH and its version. All profiles share that one binary, so it is worth seeing alongside them.

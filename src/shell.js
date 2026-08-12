@@ -150,15 +150,24 @@ export function writeAliases(shell, aliasLines) {
   return rcPath;
 }
 
-export function buildAliasLine(shell, aliasName, configDir) {
+export function buildAliasLine(shell, aliasName, configDir, ghConfigDir) {
   // We use single quotes so $HOME stays literal and gets expanded by the
   // shell at alias-call time, not at definition time. That keeps the alias
   // portable across machines if the user syncs their dotfiles.
+  //
+  // GH_CONFIG_DIR is optional. When set, the GitHub CLI reads its hosts.yml
+  // (and therefore which account it is logged in as) from the profile's own
+  // directory. Claude Code passes its environment to the shell commands it
+  // runs, so every `gh` call made inside this profile uses that account.
+  const env = [`CLAUDE_CONFIG_DIR="${configDir}"`];
+  if (ghConfigDir) env.push(`GH_CONFIG_DIR="${ghConfigDir}"`);
+  const prefix = env.join(" ");
+
   if (shell === "fish") {
     // Fish has a different syntax. We define a function rather than an alias
     // because Fish's `alias` doesn't preserve env-var prefixing the way Bash
     // and Zsh do.
-    return `function ${aliasName}; CLAUDE_CONFIG_DIR="${configDir}" claude $argv; end`;
+    return `function ${aliasName}; ${prefix} claude $argv; end`;
   }
-  return `alias ${aliasName}='CLAUDE_CONFIG_DIR="${configDir}" claude'`;
+  return `alias ${aliasName}='${prefix} claude'`;
 }

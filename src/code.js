@@ -33,6 +33,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { HOME, pathStr, tildify, ok, info, warn, step } from "./util.js";
+import { resolveBinaries } from "./claudebin.js";
 import {
   detectShell,
   rcPathForShell,
@@ -49,6 +50,32 @@ export function defaultConfigDirFor(name) {
 // The default Claude Code config dir. Used when we offer to seed the new
 // profile from an existing setup.
 export const DEFAULT_CLAUDE_CONFIG_DIR = path.join(HOME, ".claude");
+
+// Where a profile's GitHub CLI config lives when gh isolation is enabled.
+//
+// It sits INSIDE the profile's config dir on purpose: `rename` moves it and
+// `remove` deletes it without either command needing to know gh exists. The
+// GitHub CLI honours GH_CONFIG_DIR the same way Claude Code honours
+// CLAUDE_CONFIG_DIR, so pointing it here gives the profile its own hosts.yml
+// and therefore its own logged-in GitHub account.
+export function defaultGhConfigDirFor(configDir) {
+  return path.join(configDir, "gh");
+}
+
+// Is the GitHub CLI available? Only then is offering to isolate it useful.
+export function hasGhCli() {
+  return resolveBinaries("gh").length > 0;
+}
+
+// GH_TOKEN and friends take precedence over anything in a gh config dir, so a
+// globally-exported token silently defeats per-profile isolation. Returns the
+// offending variable name, or null.
+export function ghTokenOverride(env = process.env) {
+  for (const v of ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN"]) {
+    if (env[v]) return v;
+  }
+  return null;
+}
 
 export function defaultAliasNameFor(name) {
   // Human-friendly alias users will actually type.
@@ -114,13 +141,13 @@ function cleanCredentialsFromDir(dir) {
 
 // ---- Shell alias setup ---------------------------------------------------
 
-export function addAlias({ aliasName, configDir }) {
+export function addAlias({ aliasName, configDir, ghConfigDir }) {
   // We rebuild the entire managed block on every write rather than
   // appending. This keeps the aliases in a stable order (alphabetical)
   // and prevents duplicates.
   const shell = detectShell();
   const existing = readManagedAliases(shell).filter((a) => a.name !== aliasName);
-  const newLine = buildAliasLine(shell, aliasName, configDir);
+  const newLine = buildAliasLine(shell, aliasName, configDir, ghConfigDir);
   const allLines = [...existing.map((a) => a.line), newLine].sort();
   const rcPath = writeAliases(shell, allLines);
   return { shell, rcPath };
@@ -136,11 +163,14 @@ export function removeAlias(aliasName) {
 
 // ---- Top-level orchestration ---------------------------------------------
 
-export function setupCode({ name, configDir, aliasName, seedFromDefault }) {
+export function setupCode({ name, configDir, aliasName, seedFromDefault, isolateGh }) {
   step(`Creating Claude Code profile "${name}"`);
+
+  const ghConfigDir = isolateGh ? defaultGhConfigDirFor(configDir) : null;
 
   info(`Config folder: ${pathStr(tildify(configDir))}`);
   info(`Shell alias: ${pathStr(aliasName)}`);
+  if (ghConfigDir) info(`GitHub CLI config: ${pathStr(tildify(ghConfigDir))}`);
 
   const created = ensureConfigDir(configDir, { seedFromDefault });
   if (created) {
@@ -154,8 +184,15 @@ export function setupCode({ name, configDir, aliasName, seedFromDefault }) {
     warn(`Config folder already existed; left untouched. (${pathStr(tildify(configDir))})`);
   }
 
-  const { shell, rcPath } = addAlias({ aliasName, configDir });
+  if (ghConfigDir) {
+    // gh creates its own files on first login; we just make the directory so
+    // the alias points somewhere real and `gh auth login` has a home.
+    fs.mkdirSync(ghConfigDir, { recursive: true });
+    ok("GitHub CLI config folder ready (sign in separately with `gh auth login`).");
+  }
+
+  const { shell, rcPath } = addAlias({ aliasName, configDir, ghConfigDir });
   ok(`Alias "${aliasName}" added to ${pathStr(tildify(rcPath))} (shell: ${shell}).`);
 
-  return { configDir, aliasName, shell, rcPath };
+  return { configDir, aliasName, shell, rcPath, ghConfigDir };
 }

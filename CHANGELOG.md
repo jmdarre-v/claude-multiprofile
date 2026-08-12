@@ -3,6 +3,27 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## 0.1.16 (2026-08-12)
+
+### Added
+
+- Optional per-profile GitHub CLI login. When `gh` is installed, `add` offers
+  to give the profile its own GitHub account by pointing `GH_CONFIG_DIR` at
+  `~/.claude-{name}/gh`, so every `gh` command Claude runs inside that profile
+  acts as that account. Off by default, since a single GitHub identity across
+  profiles is what most setups want.
+
+  The config folder nests inside the profile's own directory, so `rename`
+  moves it and `remove` deletes it with no extra handling. `rename` recomputes
+  the path so the rewritten alias points at the folder that now exists.
+- `doctor` reports per-profile gh isolation, and warns when `GH_TOKEN`,
+  `GITHUB_TOKEN`, or `GH_ENTERPRISE_TOKEN` is exported in your environment.
+  `gh` prefers those over any config directory, so one of them set globally
+  silently makes every profile use the same account. It also flags a gh config
+  folder that has gone missing, which sends `gh` back to your default login.
+
+Profiles that do not opt in generate exactly the same alias line as before.
+
 ## 0.1.15 (2026-08-09)
 
 ### Added

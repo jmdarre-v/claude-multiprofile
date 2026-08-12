@@ -34,7 +34,7 @@ import {
   copyClaudeIcon,
   DEFAULT_APPLET_BUNDLE_ID,
 } from "../desktop.js";
-import { DEFAULT_CLAUDE_CONFIG_DIR } from "../code.js";
+import { DEFAULT_CLAUDE_CONFIG_DIR, ghTokenOverride } from "../code.js";
 import { resyncDenyRules, auditDenyRules } from "../permissions.js";
 import { detectShell, rcPathForShell, readManagedAliases } from "../shell.js";
 import {
@@ -404,6 +404,43 @@ function checkLauncherEnv(t, reg, fix) {
   }
 }
 
+// ---- Check: per-profile GitHub CLI isolation --------------------------------
+//
+// Two things can silently defeat it:
+//
+//   1. GH_TOKEN / GITHUB_TOKEN exported globally. gh prefers those over
+//      anything in a config dir, so every profile would act as that token's
+//      account no matter what the alias sets.
+//   2. The gh config dir having gone missing (profile moved by hand, folder
+//      deleted), which sends gh back to its default config.
+
+function checkGhIsolation(t, reg) {
+  const isolated = reg.profiles.filter((p) => p.code && p.code.ghConfigDir);
+  if (isolated.length === 0) return;
+
+  step("GitHub CLI isolation");
+
+  const override = ghTokenOverride();
+  if (override) {
+    warn(`${override} is set in your environment.`);
+    info("  gh prefers that token over any config directory, so every profile");
+    info("  acts as its account regardless of per-profile settings.");
+    info("  Unset it in your shell config for per-profile gh logins to work.");
+    t.warnings++;
+  }
+
+  for (const p of isolated) {
+    if (fileExists(p.code.ghConfigDir)) {
+      ok(`${p.name}: ${dim(tildify(p.code.ghConfigDir))}`);
+    } else {
+      warn(`${p.name}: gh config folder is missing (${tildify(p.code.ghConfigDir)}).`);
+      info("  gh will fall back to your default login for this profile.");
+      info(`  Recreate it with ${command(`mkdir -p "${tildify(p.code.ghConfigDir)}"`)} then sign in with ${command("gh auth login")}.`);
+      t.warnings++;
+    }
+  }
+}
+
 // ---- Check: cross-profile read protection (issue #4) -----------------------
 
 function checkDenyRules(t, reg, fix) {
@@ -487,6 +524,7 @@ export async function doctor(args = []) {
   checkProfiles(t, reg);
   checkLauncherBundleIds(t, reg, fix);
   checkLauncherEnv(t, reg, fix);
+  checkGhIsolation(t, reg);
   checkDenyRules(t, reg, fix);
 
   // ---- Summary -------------------------------------------------------------

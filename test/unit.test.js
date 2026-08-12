@@ -61,6 +61,44 @@ test("buildAliasLine produces zsh/bash-style alias with quoted env var", () => {
   assert.equal(line, `alias claude-work='CLAUDE_CONFIG_DIR="/Users/x/.claude-work" claude'`);
 });
 
+test("buildAliasLine adds GH_CONFIG_DIR only when gh isolation is on", () => {
+  const withGh = buildAliasLine(
+    "zsh",
+    "claude-work",
+    "/Users/x/.claude-work",
+    "/Users/x/.claude-work/gh"
+  );
+  assert.equal(
+    withGh,
+    `alias claude-work='CLAUDE_CONFIG_DIR="/Users/x/.claude-work" GH_CONFIG_DIR="/Users/x/.claude-work/gh" claude'`
+  );
+
+  // Omitting it must produce exactly the pre-0.1.16 line, so existing
+  // profiles are untouched by the feature.
+  const withoutGh = buildAliasLine("zsh", "claude-work", "/Users/x/.claude-work");
+  assert.equal(
+    withoutGh,
+    `alias claude-work='CLAUDE_CONFIG_DIR="/Users/x/.claude-work" claude'`
+  );
+  assert.ok(!withoutGh.includes("GH_CONFIG_DIR"));
+
+  // Fish takes the same treatment through its function syntax.
+  const fish = buildAliasLine("fish", "claude-work", "/c", "/c/gh");
+  assert.match(fish, /^function claude-work; CLAUDE_CONFIG_DIR="\/c" GH_CONFIG_DIR="\/c\/gh" claude \$argv; end$/);
+});
+
+test("ghTokenOverride: reports the variable that would defeat per-profile gh config", async () => {
+  const { ghTokenOverride, defaultGhConfigDirFor } = await import("../src/code.js");
+  assert.equal(ghTokenOverride({}), null);
+  assert.equal(ghTokenOverride({ GH_TOKEN: "x" }), "GH_TOKEN");
+  assert.equal(ghTokenOverride({ GITHUB_TOKEN: "x" }), "GITHUB_TOKEN");
+  assert.equal(ghTokenOverride({ GH_ENTERPRISE_TOKEN: "x" }), "GH_ENTERPRISE_TOKEN");
+  // An empty value is not an override.
+  assert.equal(ghTokenOverride({ GH_TOKEN: "" }), null);
+  // gh config nests inside the profile so rename/remove carry it for free.
+  assert.equal(defaultGhConfigDirFor("/Users/x/.claude-work"), "/Users/x/.claude-work/gh");
+});
+
 test("buildAliasLine produces a fish function for fish", () => {
   const line = buildAliasLine("fish", "claude-work", "/home/x/.claude-work");
   assert.match(line, /^function claude-work;/);

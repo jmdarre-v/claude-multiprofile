@@ -43,15 +43,18 @@ import {
   copyClaudeIcon,
 } from "../desktop.js";
 
-const LSREGISTER =
-  "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
 import {
   defaultConfigDirFor,
   defaultAliasNameFor,
   DEFAULT_CLAUDE_CONFIG_DIR,
   setupCode,
+  hasGhCli,
+  ghTokenOverride,
 } from "../code.js";
 import { detectShell, rcPathForShell } from "../shell.js";
+
+const LSREGISTER =
+  "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
 
 // Directory basenames under $HOME that belong to OTHER tools in the Claude
 // ecosystem (or to Claude itself). Naming a profile `mem` would default its
@@ -259,6 +262,7 @@ export async function add() {
           aliasName: codeResult.aliasName,
           shell: codeResult.shell,
           rcPath: codeResult.rcPath,
+          ghConfigDir: codeResult.ghConfigDir || null,
         }
       : null,
     createdAt: new Date().toISOString(),
@@ -355,6 +359,7 @@ async function linkExisting(profile, missing) {
       aliasName: codeResult.aliasName,
       shell: codeResult.shell,
       rcPath: codeResult.rcPath,
+      ghConfigDir: codeResult.ghConfigDir || null,
     };
   }
 
@@ -620,7 +625,36 @@ async function askCodeQuestions(name) {
     });
   }
 
-  return { name, configDir, aliasName, seedFromDefault };
+  // GitHub CLI isolation: opt-in, and only worth offering if gh is installed.
+  // Plenty of people deliberately want one GitHub identity across every Claude
+  // profile, so this is off by default.
+  let isolateGh = false;
+  if (hasGhCli()) {
+    explain(`
+      The GitHub CLI (gh) reads its logged-in account from a config folder,
+      and it honors GH_CONFIG_DIR the same way Claude Code honors
+      CLAUDE_CONFIG_DIR. We can give this profile its own, so any "gh"
+      command Claude runs here acts as a separate GitHub account.
+
+      Useful when a profile maps to a client or employer with its own GitHub
+      org. Leave it off to keep using your current single gh login
+      everywhere, which is what most setups want.
+    `);
+    isolateGh = await confirm({
+      message: "Give this profile its own GitHub CLI login?",
+      default: false,
+    });
+    if (isolateGh) {
+      const override = ghTokenOverride();
+      if (override) {
+        warn(`${override} is set in your environment.`);
+        info("That overrides per-profile gh config, so every profile would use that token.");
+        info("Unset it in your shell config for profile-specific gh logins to take effect.");
+      }
+    }
+  }
+
+  return { name, configDir, aliasName, seedFromDefault, isolateGh };
 }
 
 // ===========================================================================

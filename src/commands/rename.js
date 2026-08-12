@@ -32,7 +32,13 @@ import { execFileSync } from "node:child_process";
 import { select, input, confirm } from "@inquirer/prompts";
 import { getRegistry, findProfile, replaceProfile } from "../registry.js";
 import { resyncDenyRules } from "../permissions.js";
-import { addAlias, removeAlias, defaultConfigDirFor, defaultAliasNameFor } from "../code.js";
+import {
+  addAlias,
+  removeAlias,
+  defaultConfigDirFor,
+  defaultAliasNameFor,
+  defaultGhConfigDirFor,
+} from "../code.js";
 import {
   compileApp,
   copyClaudeIcon,
@@ -224,9 +230,16 @@ export async function rename(args = []) {
     if (newCode.aliasName !== profile.code.aliasName) {
       removeAlias(profile.code.aliasName);
     }
+    // The gh config dir lives inside the profile's config dir, so it moved
+    // with it above. Recompute it from the new location so the rewritten
+    // alias exports the path that now exists rather than the old one.
+    if (profile.code.ghConfigDir) {
+      newCode.ghConfigDir = defaultGhConfigDirFor(newCode.configDir);
+    }
     const { rcPath } = addAlias({
       aliasName: newCode.aliasName,
       configDir: newCode.configDir,
+      ghConfigDir: newCode.ghConfigDir,
     });
     newCode.rcPath = rcPath;
     ok(`Alias "${newCode.aliasName}" written to ${pathStr(tildify(rcPath))}.`);
