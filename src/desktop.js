@@ -108,7 +108,7 @@ export function ensureDataDir(dataDir) {
 
 // ---- .app bundle generation ----------------------------------------
 
-export function buildLaunchAppleScript(dataDir, claudeAppPath, codeConfigDir) {
+export function buildLaunchAppleScript(dataDir, claudeAppPath, codeConfigDir, ghConfigDir) {
   // The `open -n` flag forces a new instance even when Claude is already
   // running. Without -n, macOS would route the request to the existing
   // Claude window and ignore our --user-data-dir argument entirely.
@@ -147,9 +147,15 @@ export function buildLaunchAppleScript(dataDir, claudeAppPath, codeConfigDir) {
   // osacompile refuses the script outright. A user named o'brien has an
   // apostrophe in $HOME and therefore in every default path we generate, so
   // this is reachable rather than theoretical.
+  //
+  // GH_CONFIG_DIR rides along the same way when the profile has its own
+  // GitHub CLI login. Without it, Claude Code opened from inside Desktop
+  // would use the profile's Claude config but the machine's default gh
+  // account, which is a confusing half-isolation.
   const cmd =
     `open -n -a ${shellQuote(claudeAppPath)} ` +
     (codeConfigDir ? `--env ${shellQuote(`CLAUDE_CONFIG_DIR=${codeConfigDir}`)} ` : "") +
+    (ghConfigDir ? `--env ${shellQuote(`GH_CONFIG_DIR=${ghConfigDir}`)} ` : "") +
     `--args --user-data-dir=${shellQuote(dataDir)} > /dev/null 2>&1 &`;
   return `do shell script ${appleScriptString(cmd)}`;
 }
@@ -194,20 +200,29 @@ export function readLauncherScript(appPath) {
   }
 }
 
-// The CLAUDE_CONFIG_DIR a launcher currently exports, or null if it exports
-// none. Returns undefined when the script can't be read at all, so callers can
-// tell "no env flag" apart from "couldn't look".
-export function launcherCodeConfigDir(appPath) {
+// The value a launcher exports for `name`, or null if it exports none.
+// Returns undefined when the script can't be read at all, so callers can tell
+// "no env flag" apart from "couldn't look".
+export function launcherEnvVar(appPath, name) {
   const src = readLauncherScript(appPath);
   if (src === null) return undefined;
-  // Our generated line always places --env immediately before --args.
-  const m = src.match(/--env 'CLAUDE_CONFIG_DIR=(.*?)' --args/);
+  // Our generated line places every --env before --args, so match up to the
+  // closing quote that precedes either the next --env or --args.
+  const m = src.match(new RegExp(`--env '${name}=(.*?)' --`));
   if (!m) return null;
   // Undo the two escaping layers in the order they were applied, outermost
   // first: the decompiled text is AppleScript source (so backslashes are
   // doubled), and inside it the path is shell single-quote escaped.
   const unAppleScript = m[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\");
   return unAppleScript.replace(/'\\''/g, "'");
+}
+
+export function launcherCodeConfigDir(appPath) {
+  return launcherEnvVar(appPath, "CLAUDE_CONFIG_DIR");
+}
+
+export function launcherGhConfigDir(appPath) {
+  return launcherEnvVar(appPath, "GH_CONFIG_DIR");
 }
 
 export function uniqueBundleId(name) {
@@ -282,11 +297,11 @@ export function stripQuarantine(appPath) {
   }
 }
 
-export function compileApp({ name, dataDir, appPath, claudeAppPath, codeConfigDir }) {
+export function compileApp({ name, dataDir, appPath, claudeAppPath, codeConfigDir, ghConfigDir }) {
   // We write the AppleScript to a temp file then run `osacompile` to turn
   // it into a real .app bundle. osacompile is part of macOS, no install
   // needed.
-  const script = buildLaunchAppleScript(dataDir, claudeAppPath, codeConfigDir);
+  const script = buildLaunchAppleScript(dataDir, claudeAppPath, codeConfigDir, ghConfigDir);
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "cp-"));
   const scriptPath = path.join(tmpDir, "launcher.applescript");
   fs.writeFileSync(scriptPath, script, "utf8");
@@ -362,7 +377,7 @@ export function copyClaudeIcon(appPath, claudeAppPath) {
 
 // ---- Top-level orchestration -------------------------------------
 
-export function setupDesktop({ name, dataDir, appPath, claudeAppPath, applyIcon, codeConfigDir }) {
+export function setupDesktop({ name, dataDir, appPath, claudeAppPath, applyIcon, codeConfigDir, ghConfigDir }) {
   // Wraps the whole setup. Returns a summary the wizard can save to the
   // registry and print to the user.
   step(`Creating Claude Desktop profile "${name}"`);
@@ -375,7 +390,7 @@ export function setupDesktop({ name, dataDir, appPath, claudeAppPath, applyIcon,
   ensureDataDir(dataDir);
   ok("Data folder ready.");
 
-  compileApp({ name, dataDir, appPath, claudeAppPath, codeConfigDir });
+  compileApp({ name, dataDir, appPath, claudeAppPath, codeConfigDir, ghConfigDir });
   ok("Launcher .app compiled.");
 
   if (applyIcon) {

@@ -11,6 +11,7 @@
 //   2. Profile name + per-target configuration questions
 //   3. Confirmation, execution, and printed next steps
 
+import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { input, select, confirm } from "@inquirer/prompts";
@@ -50,6 +51,8 @@ import {
   setupCode,
   hasGhCli,
   ghTokenOverride,
+  defaultGhConfigDirFor,
+  addAlias,
 } from "../code.js";
 import { detectShell, rcPathForShell } from "../shell.js";
 
@@ -70,6 +73,12 @@ const RESERVED_NAMES = {
   code: "reserved (~/.claude-code)",
   desktop: "reserved (~/.claude-desktop)",
 };
+
+// A complete profile can still gain something: its own GitHub CLI login, if
+// gh is installed and the profile has a Code half that is not isolated yet.
+export function canEnableGh(profile, ghAvailable = hasGhCli()) {
+  return Boolean(ghAvailable && profile.code && !profile.code.ghConfigDir);
+}
 
 // Which of the selected targets this profile does not have yet. Empty means
 // there is nothing to link and the name really is taken.
@@ -161,7 +170,11 @@ export async function add() {
       // A Desktop-only profile that needs Claude Code (or the reverse) is a
       // half-built profile, and completing it is the whole point of linking.
       const existing = findProfile(cleaned);
-      if (existing && !missingTargets(existing, { wantsDesktop, wantsCode }).length) {
+      if (
+        existing &&
+        !missingTargets(existing, { wantsDesktop, wantsCode }).length &&
+        !canEnableGh(existing)
+      ) {
         return `Profile "${cleaned}" already exists with everything you selected.`;
       }
       return true;
@@ -179,6 +192,7 @@ export async function add() {
   const existing = findProfile(name);
   if (existing) {
     const missing = missingTargets(existing, { wantsDesktop, wantsCode });
+    if (missing.length === 0) return enableGhForProfile(existing);
     return linkExisting(existing, missing);
   }
 
@@ -278,6 +292,116 @@ export async function add() {
   // ---- Final guidance -------------------------------------------------
 
   printNextSteps({ name, desktopResult, codeResult });
+}
+
+// ===========================================================================
+// Turning on gh isolation for a profile that is otherwise complete
+// ===========================================================================
+//
+// Profiles created before 0.1.16, or ones that declined gh isolation at
+// creation, have both halves but no GitHub CLI separation. There was no way to
+// enable it afterwards short of hand-editing the alias, so `add` now routes a
+// complete profile here instead of refusing the name.
+//
+// Both surfaces have to be updated or the isolation is half-applied: the shell
+// alias covers `claude-<name>` in a terminal, and the Desktop launcher covers
+// Claude Code opened from inside the Desktop app.
+
+async function enableGhForProfile(profile) {
+  step(`Profile "${profile.name}" is already set up`);
+  info("It has both Claude Desktop and Claude Code." );
+  console.log("");
+
+  explain(`
+    One thing it does not have yet is its own GitHub CLI login. Right now any
+    "gh" command Claude runs in this profile uses your machine's default
+    GitHub account.
+
+    Turning this on points GH_CONFIG_DIR at a folder inside the profile, so
+    the profile can be signed in as a different GitHub account. You sign in
+    once afterwards with "gh auth login".
+  `);
+
+  const proceed = await confirm({
+    message: `Give "${profile.name}" its own GitHub CLI login?`,
+    default: true,
+  });
+  if (!proceed) {
+    warn("Nothing was changed.");
+    return;
+  }
+
+  const override = ghTokenOverride();
+  if (override) {
+    console.log("");
+    warn(`${override} is set in your environment.`);
+    info("gh prefers that token over any config directory, so this profile");
+    info("would still act as that token's account. Unset it in your shell");
+    info("config for per-profile gh logins to take effect.");
+    console.log("");
+  }
+
+  const ghConfigDir = defaultGhConfigDirFor(profile.code.configDir);
+  fs.mkdirSync(ghConfigDir, { recursive: true });
+  ok(`Created ${pathStr(tildify(ghConfigDir))}`);
+
+  // Surface 1: the shell alias.
+  const { rcPath } = addAlias({
+    aliasName: profile.code.aliasName,
+    configDir: profile.code.configDir,
+    ghConfigDir,
+  });
+  ok(`Alias "${profile.code.aliasName}" updated in ${pathStr(tildify(rcPath))}.`);
+
+  const next = {
+    ...profile,
+    code: { ...profile.code, ghConfigDir, rcPath },
+  };
+
+  // Surface 2: the Desktop launcher, whose env is compiled in at build time.
+  if (profile.desktop && profile.desktop.appPath) {
+    if (!fileExists(profile.desktop.claudeAppPath)) {
+      warn(`Claude.app not found at ${profile.desktop.claudeAppPath}; launcher left as is.`);
+      info(`Claude Code opened from the Desktop app will keep using your default gh account.`);
+    } else {
+      try {
+        compileApp({
+          name: profile.name,
+          dataDir: profile.desktop.dataDir,
+          appPath: profile.desktop.appPath,
+          claudeAppPath: profile.desktop.claudeAppPath,
+          codeConfigDir: profile.code.configDir,
+          ghConfigDir,
+        });
+        copyClaudeIcon(profile.desktop.appPath, profile.desktop.claudeAppPath);
+        try {
+          execFileSync(LSREGISTER, ["-f", profile.desktop.appPath], { stdio: "pipe" });
+        } catch {
+          // Non-fatal.
+        }
+        ok("Desktop launcher rebuilt so it exports the same gh config.");
+      } catch (e) {
+        err(`Could not rebuild the launcher: ${e.message}`);
+        info(`Run ${command("claude-multiprofile doctor --fix")} to retry.`);
+      }
+    }
+  }
+
+  replaceProfile(profile.name, next);
+
+  console.log("");
+  ok(`"${profile.name}" now has its own GitHub CLI config.`);
+  console.log("");
+  info("Sign in for this profile (run this once, from anywhere):");
+  console.log("  " + command(`GH_CONFIG_DIR="${tildify(ghConfigDir)}" gh auth login`));
+  console.log("");
+  info("Then reload your shell so the updated alias takes effect:");
+  console.log("  " + command(`source ${tildify(rcPath)}`));
+  explain(`
+    After that, every "gh" command Claude runs inside this profile uses that
+    account. If the Desktop app is open, quit and reopen it to pick up the
+    rebuilt launcher.
+  `);
 }
 
 // ===========================================================================

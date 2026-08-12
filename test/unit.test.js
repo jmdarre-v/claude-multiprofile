@@ -87,6 +87,39 @@ test("buildAliasLine adds GH_CONFIG_DIR only when gh isolation is on", () => {
   assert.match(fish, /^function claude-work; CLAUDE_CONFIG_DIR="\/c" GH_CONFIG_DIR="\/c\/gh" claude \$argv; end$/);
 });
 
+test("canEnableGh: a complete profile can still gain gh isolation", async () => {
+  const { canEnableGh } = await import("../src/commands/add.js");
+  // The reported case: profile has both halves but predates gh isolation, so
+  // `add` must not refuse the name outright.
+  const complete = { name: "ipsy", desktop: {}, code: { configDir: "/c" } };
+  assert.equal(canEnableGh(complete, true), true);
+  // Already isolated: nothing left to offer.
+  assert.equal(
+    canEnableGh({ ...complete, code: { configDir: "/c", ghConfigDir: "/c/gh" } }, true),
+    false
+  );
+  // No Code half, or no gh installed: not applicable.
+  assert.equal(canEnableGh({ name: "x", desktop: {}, code: null }, true), false);
+  assert.equal(canEnableGh(complete, false), false);
+});
+
+test("buildLaunchAppleScript: emits both env vars, each independently optional", () => {
+  const APP2 = "/Applications/Claude.app";
+  const both = buildLaunchAppleScript("/data", APP2, "/c", "/c/gh");
+  assert.ok(both.includes("--env 'CLAUDE_CONFIG_DIR=/c'"));
+  assert.ok(both.includes("--env 'GH_CONFIG_DIR=/c/gh'"));
+  // Every --env has to precede --args or open passes it to the app as argv.
+  assert.ok(both.lastIndexOf("--env") < both.indexOf("--args"));
+
+  // gh omitted: unchanged from 0.1.15 output.
+  const codeOnly = buildLaunchAppleScript("/data", APP2, "/c");
+  assert.ok(codeOnly.includes("CLAUDE_CONFIG_DIR=/c"));
+  assert.ok(!codeOnly.includes("GH_CONFIG_DIR"));
+
+  // Neither: the original pre-0.1.12 line.
+  assert.ok(!buildLaunchAppleScript("/data", APP2).includes("--env"));
+});
+
 test("ghTokenOverride: reports the variable that would defeat per-profile gh config", async () => {
   const { ghTokenOverride, defaultGhConfigDirFor } = await import("../src/code.js");
   assert.equal(ghTokenOverride({}), null);

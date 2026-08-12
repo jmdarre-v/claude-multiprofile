@@ -121,7 +121,11 @@ Off by default, since one GitHub identity across all your Claude profiles is wha
 GH_CONFIG_DIR=~/.claude-work/gh gh auth login
 ```
 
-The folder lives inside the profile, so `rename` moves it and `remove` deletes it without any extra step. One caveat `doctor` will warn you about: if `GH_TOKEN` or `GITHUB_TOKEN` is exported in your shell, `gh` prefers it over any config directory and every profile will use that token regardless.
+The folder lives inside the profile, so `rename` moves it and `remove` deletes it without any extra step. Both surfaces get the variable: the shell alias covers `claude-{name}` in a terminal, and the Desktop launcher covers Claude Code opened from inside the Desktop app.
+
+One caveat `doctor` will warn you about: if `GH_TOKEN` or `GITHUB_TOKEN` is exported in your shell, `gh` prefers it over any config directory and every profile will use that token regardless.
+
+**Already have a profile?** Run `add`, pick the same targets, and enter the existing name. If the profile predates this feature, `add` offers to turn it on, rewrites the alias, and rebuilds the launcher.
 
 ### `claude-multiprofile list`
 

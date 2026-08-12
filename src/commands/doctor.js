@@ -30,6 +30,7 @@ import {
   setBundleId,
   uniqueBundleId,
   launcherCodeConfigDir,
+  launcherGhConfigDir,
   compileApp,
   copyClaudeIcon,
   DEFAULT_APPLET_BUNDLE_ID,
@@ -388,6 +389,9 @@ function checkLauncherEnv(t, reg, fix) {
         appPath: p.desktop.appPath,
         claudeAppPath: p.desktop.claudeAppPath,
         codeConfigDir: expected,
+        // Carry gh isolation through the rebuild; omitting it here would
+        // strip a working GH_CONFIG_DIR while repairing the other variable.
+        ghConfigDir: p.code.ghConfigDir || undefined,
       });
       copyClaudeIcon(p.desktop.appPath, p.desktop.claudeAppPath);
       try {
@@ -414,7 +418,7 @@ function checkLauncherEnv(t, reg, fix) {
 //   2. The gh config dir having gone missing (profile moved by hand, folder
 //      deleted), which sends gh back to its default config.
 
-function checkGhIsolation(t, reg) {
+function checkGhIsolation(t, reg, fix) {
   const isolated = reg.profiles.filter((p) => p.code && p.code.ghConfigDir);
   if (isolated.length === 0) return;
 
@@ -432,6 +436,40 @@ function checkGhIsolation(t, reg) {
   for (const p of isolated) {
     if (fileExists(p.code.ghConfigDir)) {
       ok(`${p.name}: ${dim(tildify(p.code.ghConfigDir))}`);
+      // The alias covers the terminal; the launcher covers Claude Code opened
+      // from inside Desktop. Both have to export it or isolation is partial.
+      if (isMac() && p.desktop && p.desktop.appPath && fileExists(p.desktop.appPath)) {
+        const inLauncher = launcherGhConfigDir(p.desktop.appPath);
+        if (inLauncher === null) {
+          warn(`  Its Desktop launcher does not export GH_CONFIG_DIR.`);
+          info("  Claude Code opened from the Desktop app would use your default gh account.");
+          if (fix && fileExists(p.desktop.claudeAppPath)) {
+            try {
+              compileApp({
+                name: p.name,
+                dataDir: p.desktop.dataDir,
+                appPath: p.desktop.appPath,
+                claudeAppPath: p.desktop.claudeAppPath,
+                codeConfigDir: p.code.configDir,
+                ghConfigDir: p.code.ghConfigDir,
+              });
+              copyClaudeIcon(p.desktop.appPath, p.desktop.claudeAppPath);
+              try {
+                execFileSync(LSREGISTER, ["-f", p.desktop.appPath], { stdio: "pipe" });
+              } catch {
+                // Non-fatal.
+              }
+              ok("  Repaired: launcher rebuilt with both config dirs.");
+            } catch (e) {
+              err(`  Could not rebuild the launcher: ${e.message}`);
+              t.problems++;
+            }
+          } else {
+            info(`  Repair with ${command("claude-multiprofile doctor --fix")}`);
+            t.warnings++;
+          }
+        }
+      }
     } else {
       warn(`${p.name}: gh config folder is missing (${tildify(p.code.ghConfigDir)}).`);
       info("  gh will fall back to your default login for this profile.");
@@ -524,7 +562,7 @@ export async function doctor(args = []) {
   checkProfiles(t, reg);
   checkLauncherBundleIds(t, reg, fix);
   checkLauncherEnv(t, reg, fix);
-  checkGhIsolation(t, reg);
+  checkGhIsolation(t, reg, fix);
   checkDenyRules(t, reg, fix);
 
   // ---- Summary -------------------------------------------------------------

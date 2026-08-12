@@ -3,6 +3,26 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## 0.1.17 (2026-08-12)
+
+### Fixed
+
+- The Desktop launcher now exports `GH_CONFIG_DIR` alongside
+  `CLAUDE_CONFIG_DIR`. 0.1.16 wired per-profile GitHub logins into the shell
+  alias only, so Claude Code opened from inside the Desktop app used the
+  profile's Claude config but the machine's default gh account. `doctor`
+  detects launchers missing it and `doctor --fix` rebuilds them.
+- `doctor --fix` carries an existing `GH_CONFIG_DIR` through when it rebuilds
+  a launcher to repair `CLAUDE_CONFIG_DIR`, instead of stripping it.
+
+### Added
+
+- `add` can turn on gh isolation for a profile that is already complete.
+  Profiles created before 0.1.16, or ones that declined at creation, had no
+  way to enable it short of hand-editing the alias: `add` refused the name
+  because nothing was missing. It now offers the upgrade, rewrites the alias,
+  and rebuilds the Desktop launcher so both surfaces match.
+
 ## 0.1.16 (2026-08-12)
 
 ### Added
