@@ -861,6 +861,15 @@ function printNextSteps({ name, desktopResult, codeResult }) {
       "  " + command(`open "${desktopResult.appPath}"`)
     );
     console.log("");
+    explain(`
+      To keep it in your Dock, drag the launcher itself from ~/Applications.
+
+      Do NOT drag the Claude window's tile down while it is running. That
+      tile belongs to Claude itself rather than to this profile, so pinning
+      it would launch the shared Claude next time, not this account. It is
+      the usual reason a profile icon "stops working" and has to be re-pinned.
+    `);
+    console.log("");
   }
 
   if (codeResult) {

@@ -31,6 +31,8 @@ import {
   uniqueBundleId,
   launcherCodeConfigDir,
   launcherGhConfigDir,
+  setUiElement,
+  isUiElement,
   compileApp,
   copyClaudeIcon,
   DEFAULT_APPLET_BUNDLE_ID,
@@ -427,6 +429,19 @@ function checkLauncherBundleIds(t, reg, fix) {
     }
     if (id !== DEFAULT_APPLET_BUNDLE_ID) {
       ok(`${p.name}: ${dim(id)}`);
+      // Launchers built before v0.1.22 still take their own Dock tile, which
+      // is what leads people to pin the shared Claude.app by mistake.
+      if (isUiElement(p.desktop.appPath) === false) {
+        if (fix) {
+          if (setUiElement(p.desktop.appPath, true)) {
+            ok("  Repaired: launcher no longer takes its own Dock tile.");
+          }
+        } else {
+          info(`${p.name}: its launcher still takes a Dock tile of its own.`);
+          info(`  Repair with ${command("claude-multiprofile doctor --fix")}`);
+          t.warnings++;
+        }
+      }
       continue;
     }
     // Still on the colliding default.

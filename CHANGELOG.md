@@ -3,6 +3,36 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## 0.1.22 (2026-09-01)
+
+Both changes target the same complaint: a pinned profile icon that keeps
+needing to be dragged back after a quit or an upgrade.
+
+### Fixed
+
+- Rebuilding a launcher no longer breaks its Dock pin. The Dock remembers a
+  pinned app by where it lives, and rebuilds deleted the bundle and wrote a
+  new one in its place, which invalidates that reference. Since `rename`,
+  `doctor --fix`, and the link flows all rebuild launchers, routine
+  maintenance quietly cost you a re-pin. Rebuilds now replace only the
+  compiled script inside the existing bundle, so the pin, the custom icon,
+  and anything else stamped on it survive.
+
+- Launchers no longer take a Dock tile of their own (`LSUIElement`). A
+  launcher spawns Claude and exits within about a second, so its tile
+  appeared beside Claude's own and then vanished. Two tiles for one apparent
+  app is what leads to dragging the wrong one down: the tile that persists
+  belongs to Claude itself, so pinning it launches the shared Claude rather
+  than the profile. That is the actual reason a "profile icon" stops opening
+  the right account.
+
+  `repair` and `doctor --fix` apply this to launchers built earlier, and
+  `doctor` reports the ones that still need it.
+
+- `add` now says which icon to pin, and `repair`'s closing advice was wrong
+  in the same way, telling you to re-pin from Finder without explaining that
+  the running tile is the wrong thing to drag.
+
 ## 0.1.21 (2026-09-01)
 
 ### Added

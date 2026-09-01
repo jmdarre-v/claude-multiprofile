@@ -700,6 +700,73 @@ test("binTargetsFor: handles both npm bin shapes and ignores junk", async () => 
 });
 
 // ---------------------------------------------------------------------------
+// desktop.js - rebuilding a launcher without breaking its Dock pin
+// ---------------------------------------------------------------------------
+//
+// The Dock remembers a pinned app by where it lives. Deleting the bundle and
+// writing a new one in its place invalidates that, so a pinned profile icon
+// went stale every time `rename`, `doctor --fix`, or a link flow rebuilt the
+// launcher. Rebuilds now swap only the compiled script inside the existing
+// bundle.
+
+test("compileApp: rebuilding keeps the same bundle, so a Dock pin survives", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("osacompile is macOS only");
+    return;
+  }
+  const d = await import("../src/desktop.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-inplace-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const app = path.join(root, "L.app");
+
+  d.compileApp({ name: "t", dataDir: "/data/one", appPath: app, claudeAppPath: "/Applications/Claude.app" });
+  const first = fs.statSync(app).ino;
+  assert.equal(d.isUiElement(app), true, "launcher takes no Dock tile of its own");
+  assert.equal(d.getBundleId(app), "com.claude-multiprofile.t");
+
+  // Drop a marker inside the bundle: if the rebuild recreated it wholesale,
+  // this disappears, which is exactly what breaks the pin.
+  const marker = path.join(app, "Contents", "pin-marker");
+  fs.writeFileSync(marker, "x", "utf8");
+
+  d.compileApp({
+    name: "t",
+    dataDir: "/data/two",
+    appPath: app,
+    claudeAppPath: "/Applications/Claude.app",
+    codeConfigDir: "/cfg",
+  });
+
+  assert.equal(fs.statSync(app).ino, first, "same bundle, so the pin still resolves");
+  assert.ok(fs.existsSync(marker), "bundle contents were updated, not replaced");
+  // And the rebuild really did take effect.
+  assert.ok(d.readLauncherScript(app).includes("/data/two"));
+  assert.equal(d.launcherCodeConfigDir(app), "/cfg");
+});
+
+test("setUiElement / isUiElement round-trip", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("PlistBuddy is macOS only");
+    return;
+  }
+  const d = await import("../src/desktop.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-uie-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const app = path.join(root, "L.app");
+  d.compileApp({ name: "u", dataDir: "/d", appPath: app, claudeAppPath: "/Applications/Claude.app" });
+
+  assert.equal(d.isUiElement(app), true);
+  assert.equal(d.setUiElement(app, false), true);
+  assert.equal(d.isUiElement(app), false, "an older launcher reads as visible");
+  assert.equal(d.setUiElement(app, true), true);
+  assert.equal(d.isUiElement(app), true);
+
+  // Not a bundle at all: report rather than throw mid-health-check.
+  assert.equal(d.isUiElement(path.join(root, "nope.app")), null);
+  assert.equal(d.setUiElement(path.join(root, "nope.app"), true), false);
+});
+
+// ---------------------------------------------------------------------------
 // appclone.js - per-profile coloured Claude clones (issue #2)
 // ---------------------------------------------------------------------------
 

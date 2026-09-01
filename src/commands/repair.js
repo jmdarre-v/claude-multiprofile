@@ -20,7 +20,13 @@
 import { execFileSync } from "node:child_process";
 import { select } from "@inquirer/prompts";
 import { findProfile, getRegistry } from "../registry.js";
-import { setBundleId, stripQuarantine, uniqueBundleId } from "../desktop.js";
+import {
+  setBundleId,
+  stripQuarantine,
+  uniqueBundleId,
+  setUiElement,
+  isUiElement,
+} from "../desktop.js";
 import {
   header,
   ok,
@@ -128,6 +134,19 @@ export async function repair(args) {
     ok("Cleared quarantine attribute (if any).");
   }
 
+  // ---- Keep the launcher out of the Dock ---------------------------------
+  //
+  // The launcher spawns Claude and exits, so its tile flashes up beside
+  // Claude's own. Two tiles for one apparent app is what leads people to drag
+  // the wrong one to the Dock, pinning the shared Claude.app instead of the
+  // profile. Launchers built before v0.1.22 do not have this set, and repair
+  // is the natural place to bring them up to date.
+  if (isUiElement(appPath) === false) {
+    if (setUiElement(appPath, true)) {
+      ok("Launcher will no longer take its own Dock tile.");
+    }
+  }
+
   // ---- Verify lsregister is present --------------------------------------
 
   if (!fileExists(LSREGISTER)) {
@@ -190,6 +209,6 @@ export async function repair(args) {
 
   console.log("");
   ok(`Done. Try double-clicking ${pathStr(tildify(appPath))} now.`);
-  info("If you had the launcher pinned to the Dock, drag the old icon off and re-pin from Finder. Pinned items reference the pre-repair LaunchServices entry.");
+  info("Pin it from Finder rather than dragging the running window's tile: that tile belongs to Claude itself, so pinning it would launch the shared Claude rather than this profile.");
   info("If it still doesn't launch, log out and log back in to force a full LaunchServices reset.");
 }

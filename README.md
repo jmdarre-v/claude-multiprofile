@@ -85,6 +85,16 @@ Since v0.1.12, a profile that has both Desktop and Code targets also gets `--env
 
 Launchers built before v0.1.12 keep their old launch line. Run `claude-multiprofile doctor` to find them and `doctor --fix` to rebuild them in place, which preserves the icon and bundle ID.
 
+### Keeping a profile in the Dock
+
+Drag the **launcher** from `~/Applications` into the Dock. Do not drag the Claude window's tile down while the profile is running.
+
+That tile belongs to Claude itself rather than to the launcher, because the launcher spawns Claude and exits immediately. Pinning it pins the shared `/Applications/Claude.app`, so the next click opens your default account rather than the profile. It is the usual reason a profile icon appears to "stop working" and has to be re-pinned.
+
+Since v0.1.22 the launcher no longer takes a Dock tile of its own, so the only tile you see while a profile runs is its actual Claude window, and there is nothing ambiguous to drag. Rebuilding a launcher (through `rename`, `doctor --fix`, or linking a missing half) also preserves the bundle rather than replacing it, so an existing pin keeps working.
+
+Launchers created before v0.1.22 still take a tile until they are updated. `claude-multiprofile doctor` reports them and `doctor --fix` or `repair` brings them up to date.
+
 ### Per-profile Dock colours
 
 Optional, and off by default. Choosing a colour during `add` gives the profile its own tinted copy of Claude.app, and the launcher opens that copy instead of the shared `/Applications/Claude.app`. Because the running process is now the tinted copy, its Dock tile finally carries the colour. This is what closes [issue #2](https://github.com/jmdarre-v/claude-multiprofile/issues/2).

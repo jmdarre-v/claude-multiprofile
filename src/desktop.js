@@ -258,6 +258,52 @@ export function getBundleId(appPath) {
   }
 }
 
+// Hide the launcher's own Dock tile.
+//
+// The launcher spawns Claude and exits within about a second, so its tile
+// flashes up next to Claude's own and then vanishes. That is what makes the
+// Dock confusing: two tiles for what the user thinks of as one app, and the
+// one that persists is Claude's, so dragging it to the Dock pins the SHARED
+// Claude.app rather than the profile. LSUIElement stops the launcher from
+// ever taking a tile, leaving exactly one: the profile's running window.
+//
+// Safe to edit here, unlike Claude.app: this bundle is ours, produced by
+// osacompile, so there is no Anthropic signature to invalidate.
+export function setUiElement(appPath, hidden = true) {
+  const plist = path.join(appPath, "Contents", "Info.plist");
+  if (!fileExists(plist)) return false;
+  const value = hidden ? "true" : "false";
+  try {
+    execFileSync(PLIST_BUDDY, ["-c", `Set :LSUIElement ${value}`, plist], {
+      stdio: "pipe",
+    });
+    return true;
+  } catch {
+    try {
+      execFileSync(PLIST_BUDDY, ["-c", `Add :LSUIElement bool ${value}`, plist], {
+        stdio: "pipe",
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+export function isUiElement(appPath) {
+  const plist = path.join(appPath, "Contents", "Info.plist");
+  if (!fileExists(plist)) return null;
+  try {
+    const out = execFileSync(PLIST_BUDDY, ["-c", "Print :LSUIElement", plist], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+    return out === "true" || out === "1";
+  } catch {
+    return false; // key absent means visible
+  }
+}
+
 export function setBundleId(appPath, bundleId) {
   // PlistBuddy needs the literal Info.plist path, not the .app path.
   const plist = path.join(appPath, "Contents", "Info.plist");
@@ -311,18 +357,38 @@ export function compileApp({ name, dataDir, appPath, claudeAppPath, codeConfigDi
   // not auto-created on a fresh user account so we ensure it.
   fs.mkdirSync(path.dirname(appPath), { recursive: true });
 
-  // If the app already exists, remove it first so osacompile won't error.
-  if (fileExists(appPath)) {
-    fs.rmSync(appPath, { recursive: true, force: true });
-  }
-
-  execFileSync("/usr/bin/osacompile", ["-o", appPath, scriptPath], {
+  // Compile into the temp directory first, never straight over the target.
+  const staged = path.join(tmpDir, "staged.app");
+  execFileSync("/usr/bin/osacompile", ["-o", staged, scriptPath], {
     stdio: "pipe",
   });
+
+  // Updating an EXISTING launcher swaps only the compiled script, leaving the
+  // bundle directory itself untouched.
+  //
+  // This matters because the Dock remembers a pinned app by its location, and
+  // deleting the bundle and writing a new one in its place breaks that
+  // reference: the pin goes stale and the user has to drag the icon back.
+  // `rename`, `doctor --fix`, and the link flows all rebuild launchers, so
+  // delete-and-recreate meant a re-pin after routine maintenance. Replacing
+  // just Contents/Resources/Scripts/main.scpt keeps the bundle, and with it
+  // the pin, the custom icon, and anything else already stamped on it.
+  const rel = path.join("Contents", "Resources", "Scripts", "main.scpt");
+  const updatingInPlace = fileExists(appPath) && fileExists(path.join(appPath, rel));
+  if (updatingInPlace) {
+    fs.copyFileSync(path.join(staged, rel), path.join(appPath, rel));
+  } else {
+    if (fileExists(appPath)) fs.rmSync(appPath, { recursive: true, force: true });
+    fs.renameSync(staged, appPath);
+  }
 
   // Stamp a unique CFBundleIdentifier so multiple profiles don't collide
   // in LaunchServices (see notes on uniqueBundleId).
   setBundleId(appPath, uniqueBundleId(name));
+
+  // Keep the launcher out of the Dock while it runs, so the only tile is the
+  // profile's actual Claude window.
+  setUiElement(appPath, true);
 
   // Best-effort cleanup of the temp file.
   try {
