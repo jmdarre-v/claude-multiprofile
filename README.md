@@ -142,7 +142,7 @@ Diagnoses the machine, not just the registry. Where `status` asks "is each profi
 It checks:
 
 - **Which `claude` wins on PATH**, its version, and any shadowed copies. Every profile shares one binary, so a duplicate from another Node version is a common cause of "I upgraded and nothing changed."
-- **Broken npm installs.** A package directory left with `node_modules/` but no `package.json` silently de-registers the command and lets PATH fall through to an older copy.
+- **Broken npm installs.** A package directory left with `node_modules/` but no `package.json` silently de-registers the command and lets PATH fall through to an older copy. It also checks that what each package declares as its executable exists, is executable, and actually runs, since a postinstall that stops partway leaves a perfect `package.json` behind a command that cannot start.
 - **Directory collisions.** A profile pointing at another tool's data folder (`~/.claude-mem`, `~/.claude-profiles`), or two profiles sharing one directory.
 - **Launcher bundle IDs.** Launchers created before v0.1.9 still carry the default AppleScript bundle identifier; with two or more of them, macOS confuses the launchers and Dock double-clicks stop working.
 - **Launchers that don't export `CLAUDE_CONFIG_DIR`.** Launchers created before v0.1.12 let Claude Code sessions started from inside Desktop fall back to the shared `~/.claude`. `doctor` reads the launcher's compiled script to find them, and `--fix` rebuilds them in place.

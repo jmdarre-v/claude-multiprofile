@@ -617,6 +617,44 @@ test("missingTargets: an existing name is only taken when nothing is left to add
 });
 
 // ---------------------------------------------------------------------------
+// doctor.js - resolving a package's declared executables
+// ---------------------------------------------------------------------------
+//
+// A present package.json is not proof the command works. Claude Code 2.1.240
+// shipped a case where the manifest was perfect, the native binary was
+// downloaded, and `bin/claude.exe` was still the "not installed" stub at mode
+// 644, so `claude` failed with `permission denied` while every structural
+// check passed.
+
+test("binTargetsFor: handles both npm bin shapes and ignores junk", async () => {
+  const { binTargetsFor } = await import("../src/commands/doctor.js");
+
+  // Map form, which is what Claude Code uses.
+  assert.deepEqual(
+    binTargetsFor("/pkg/claude-code", { name: "@anthropic-ai/claude-code", bin: { claude: "bin/claude.exe" } }),
+    { claude: "/pkg/claude-code/bin/claude.exe" }
+  );
+
+  // String form: one command, named after the package.
+  assert.deepEqual(
+    binTargetsFor("/pkg/thing", { name: "thing", bin: "cli.js" }),
+    { thing: "/pkg/thing/cli.js" }
+  );
+
+  // String form with no name falls back to the directory name.
+  assert.deepEqual(binTargetsFor("/pkg/fallback", { bin: "run.js" }), {
+    fallback: "/pkg/fallback/run.js",
+  });
+
+  // No bin, or shapes npm would never produce, yield nothing rather than
+  // throwing partway through a health check.
+  assert.deepEqual(binTargetsFor("/pkg/x", {}), {});
+  assert.deepEqual(binTargetsFor("/pkg/x", { bin: null }), {});
+  assert.deepEqual(binTargetsFor("/pkg/x", { bin: ["a"] }), {});
+  assert.deepEqual(binTargetsFor("/pkg/x", { bin: { a: "" } }), {});
+});
+
+// ---------------------------------------------------------------------------
 // claudebin.js - which output parsing
 // ---------------------------------------------------------------------------
 

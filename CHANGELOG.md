@@ -3,6 +3,28 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## 0.1.18 (2026-08-22)
+
+### Fixed
+
+- `doctor` no longer reports a package as intact based on its `package.json`
+  alone. It now resolves what the package declares as its executable and
+  checks that the file exists, carries the execute bit, and actually runs.
+
+  The case that exposed this: a Claude Code install whose postinstall stopped
+  partway. The manifest was perfect and the native binary had been
+  downloaded, but `bin/claude.exe` was still the "not installed" stub at mode
+  644, so `claude` failed with `permission denied`. `doctor` reported
+  "install looks intact" in the same breath as "No claude on PATH". A false
+  reassurance is worse than silence, because it points away from the fault.
+
+  Failures are now named specifically: a missing target, a missing execute
+  bit, a non-zero exit (quoting what the command said), or death by signal.
+  For `SIGKILL` on Apple Silicon it points at an unsigned or invalid
+  signature, which the kernel refuses to start. Each one suggests re-running
+  the package's own postinstall first, since that is usually the step that
+  did not finish, with a full reinstall as the fallback.
+
 ## 0.1.17 (2026-08-12)
 
 ### Fixed

@@ -21,7 +21,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { getRegistry, registryLocation, registryHealth } from "../registry.js";
 import { detectDefaults } from "../detect.js";
 import { resolveClaude } from "../claudebin.js";
@@ -117,6 +117,106 @@ function globalNodeModules() {
   }
 }
 
+// Validate what a package declares as its executable, rather than inferring
+// health from directory structure.
+//
+// The failure this exists for: Claude Code 2.1.240 shipped with a postinstall
+// that downloads a platform-native binary and then finishes wiring up
+// `bin/claude.exe`. When that postinstall stops partway, you are left with a
+// perfect package.json, a downloaded binary, and a `bin` entry that is still
+// the 500-byte "not installed" stub at mode 644. Every structural check
+// passes while `claude` cannot start at all. Checking the manifest and
+// declaring victory is worse than saying nothing, because it actively points
+// the user away from the real fault.
+//
+// Returns the number of problems found so the caller can phrase its summary
+// honestly.
+// Resolve a package's `bin` field into { commandName: absolutePath }. npm
+// allows either a bare string (one command, named after the package) or a map.
+// Pure, so the shape handling is testable without a filesystem.
+export function binTargetsFor(dir, pkg) {
+  const bins =
+    typeof pkg.bin === "string"
+      ? { [pkg.name || path.basename(dir)]: pkg.bin }
+      : pkg.bin && typeof pkg.bin === "object" && !Array.isArray(pkg.bin)
+        ? pkg.bin
+        : {};
+  const out = {};
+  for (const [name, rel] of Object.entries(bins)) {
+    if (typeof rel === "string" && rel) out[name] = path.join(dir, rel);
+  }
+  return out;
+}
+
+function checkBinTargets(dir, pkg, t) {
+  let issues = 0;
+
+  for (const [cmdName, target] of Object.entries(binTargetsFor(dir, pkg))) {
+    const rel = path.relative(dir, target);
+    if (!fileExists(target)) {
+      err(`  "${cmdName}" points at ${rel}, which does not exist.`);
+      issues++;
+      t.problems++;
+      continue;
+    }
+
+    // The executable bit is the difference between "runs" and the confusing
+    // `permission denied` you get when a shell finds the file and cannot
+    // exec it.
+    try {
+      fs.accessSync(target, fs.constants.X_OK);
+    } catch {
+      err(`  "${cmdName}" (${rel}) is not executable.`);
+      info("    A shell that finds it will fail with `permission denied`.");
+      issues++;
+      t.problems++;
+      suggestPostinstall(dir, pkg);
+      continue;
+    }
+
+    // Executable is still not the same as working: a native binary can be
+    // unsigned (macOS kills those outright on Apple Silicon), corrupt, or
+    // missing a dependency. Running it is the only honest test.
+    const probe = spawnSync(target, ["--version"], {
+      encoding: "utf8",
+      timeout: 20_000,
+    });
+    if (probe.error) {
+      err(`  "${cmdName}" could not be executed: ${probe.error.message}`);
+      issues++;
+      t.problems++;
+    } else if (probe.signal) {
+      err(`  "${cmdName}" was killed by ${probe.signal} when run.`);
+      if (probe.signal === "SIGKILL" && isMac()) {
+        info("    On Apple Silicon this usually means the binary is unsigned");
+        info("    or its signature is invalid, so the kernel refuses to start it.");
+      }
+      issues++;
+      t.problems++;
+      suggestPostinstall(dir, pkg);
+    } else if (probe.status !== 0) {
+      err(`  "${cmdName}" exited ${probe.status} when run.`);
+      const out = `${probe.stdout || ""}${probe.stderr || ""}`.trim().split("\n")[0];
+      if (out) info(`    It said: ${out}`);
+      issues++;
+      t.problems++;
+      suggestPostinstall(dir, pkg);
+    }
+  }
+
+  return issues;
+}
+
+function suggestPostinstall(dir, pkg) {
+  const post = pkg.scripts && pkg.scripts.postinstall;
+  if (post) {
+    // Re-running the package's own postinstall is the least destructive fix
+    // and usually the exact step that did not finish.
+    info(`    Re-run its install step: ${command(`cd "${tildify(dir)}" && ${post}`)}`);
+  }
+  info(`    Or reinstall: ${command(`npm install -g ${pkg.name || path.basename(dir)}@latest --force`)}`);
+}
+
 function checkBrokenInstalls(t) {
   step("npm install integrity");
 
@@ -144,13 +244,21 @@ function checkBrokenInstalls(t) {
       info(`  Fix: ${command(`npm install -g ${path.basename(dir)}@latest --force`)}`);
       t.problems++;
     } else {
+      let pkg = null;
       try {
-        const pkg = JSON.parse(fs.readFileSync(manifest, "utf8"));
-        ok(`${pkg.name || path.basename(dir)} ${pkg.version || ""} install looks intact.`);
+        pkg = JSON.parse(fs.readFileSync(manifest, "utf8"));
       } catch {
         warn(`${tildify(dir)}: package.json is unreadable or malformed.`);
         t.warnings++;
+        continue;
       }
+      const label = `${pkg.name || path.basename(dir)} ${pkg.version || ""}`.trim();
+      // A present package.json is NOT proof the command works. Verify what the
+      // package actually declares as its executable, because a half-finished
+      // postinstall leaves the manifest perfect and the binary unusable.
+      const binIssues = checkBinTargets(dir, pkg, t);
+      if (binIssues === 0) ok(`${label} install looks intact.`);
+      else warn(`${label}: package metadata is fine but its command is not usable.`);
     }
   }
 
