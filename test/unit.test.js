@@ -700,6 +700,44 @@ test("binTargetsFor: handles both npm bin shapes and ignores junk", async () => 
 });
 
 // ---------------------------------------------------------------------------
+// appclone.js - per-profile coloured Claude clones (issue #2)
+// ---------------------------------------------------------------------------
+
+test("appclone: colour table and clone paths", async () => {
+  const c = await import("../src/appclone.js");
+  assert.ok(c.isColor("teal"));
+  assert.ok(!c.isColor("mauve"));
+  assert.ok(!c.isColor(null));
+  // Every colour is a hue rotation in degrees, so they must be numeric and
+  // inside one turn or CIHueAdjust gets a meaningless angle.
+  for (const [name, deg] of Object.entries(c.COLORS)) {
+    assert.equal(typeof deg, "number", `${name} must be numeric`);
+    assert.ok(deg >= 0 && deg < 360, `${name} must be a valid hue`);
+  }
+  // Clones live outside ~/Applications so they do not clutter the app list;
+  // the launcher is the thing meant to be visible.
+  assert.match(c.clonePathFor("work"), /claude-multiprofile\/apps\/Claude work\.app$/);
+  assert.ok(!c.clonePathFor("work").includes("/Applications/Claude.app"));
+});
+
+test("appclone: a missing clone counts as stale, so it gets rebuilt", async (t) => {
+  const c = await import("../src/appclone.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-clone-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const absent = path.join(root, "Nope.app");
+  assert.equal(c.cloneIsStale(absent, "/Applications/Claude.app"), true);
+
+  // Two bundles with no readable version: we cannot tell, so leave it alone
+  // rather than re-cloning 800MB on every doctor run.
+  const a = path.join(root, "A.app");
+  const b = path.join(root, "B.app");
+  fs.mkdirSync(path.join(a, "Contents"), { recursive: true });
+  fs.mkdirSync(path.join(b, "Contents"), { recursive: true });
+  assert.equal(c.cloneIsStale(a, b), false, "unknown versions must not force a rebuild");
+});
+
+// ---------------------------------------------------------------------------
 // claudebin.js - which output parsing
 // ---------------------------------------------------------------------------
 

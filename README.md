@@ -85,6 +85,20 @@ Since v0.1.12, a profile that has both Desktop and Code targets also gets `--env
 
 Launchers built before v0.1.12 keep their old launch line. Run `claude-multiprofile doctor` to find them and `doctor --fix` to rebuild them in place, which preserves the icon and bundle ID.
 
+### Per-profile Dock colours
+
+Optional, and off by default. Choosing a colour during `add` gives the profile its own tinted copy of Claude.app, and the launcher opens that copy instead of the shared `/Applications/Claude.app`. Because the running process is now the tinted copy, its Dock tile finally carries the colour. This is what closes [issue #2](https://github.com/jmdarre-v/claude-multiprofile/issues/2).
+
+Eight colours are available: orange, red, yellow, green, teal, blue, purple, pink. Claude's own icon is hue-rotated, so it still looks like Claude.
+
+What it costs, stated plainly:
+
+- **Disk: a few megabytes, not a few hundred.** The copy is an APFS clone (`cp -Rc`), so its blocks are shared with the original until one side changes. Measured on an 800MB Claude.app: about 1.5 seconds and 3MB of real disk.
+- **Signature: identity survives, strict verification does not.** The tint is attached as Finder metadata rather than by editing the bundle, so the copy still reports `com.anthropic.claudefordesktop` with Anthropic's Team ID, and Gatekeeper accepts it. `codesign --verify --deep --strict` does fail on it, the same as for any app carrying a custom icon.
+- **Claude updates itself; the copy does not.** `doctor` detects a clone built from an older Claude and `doctor --fix` rebuilds it.
+
+`remove` deletes the copy along with the profile. No build tools are required: the tinting and icon work go through `osascript`, which ships with macOS.
+
 ### Claude Code
 
 Claude Code (the terminal CLI) honors the `CLAUDE_CONFIG_DIR` environment variable. Set it to a folder, and Claude Code reads/writes all of its state (project memory, plugins, skills, MCP servers, slash commands) under that folder instead of the default `~/.claude`.
@@ -352,13 +366,11 @@ Three limits worth knowing:
 
 ## Known limitations
 
-### Dock icons show the standard Claude icon
+### Dock icons (fixed in v0.1.21)
 
-If you customize a launcher's icon, Finder and Get Info show your custom icon, but the Dock tile of the *running* window shows Claude's standard icon.
+Claude Desktop's Dock tile used to always show the standard Claude icon, even with a customised launcher, because the running window belongs to Claude's own process rather than to the launcher that started it.
 
-This is structural. The launcher is a small AppleScript bundle whose whole job is to run `open -n -a Claude.app --args --user-data-dir=...` and then exit. The window you end up with belongs to Claude.app's own process, not to the launcher, so the Dock tile uses Claude's icon. Changing the launcher's icon can't affect it, because the launcher isn't the running application.
-
-Giving each profile a genuinely distinct Dock icon would mean shipping a separate re-bundled copy of Claude per profile, which breaks code signing and auto-update. Not a trade worth making. For telling windows apart at a glance, see [Visual disambiguation](#visual-disambiguation).
+Since v0.1.21 you can give a profile a colour, and it launches a private tinted copy of Claude.app instead. See [Per-profile Dock colours](#per-profile-dock-colours).
 
 ### Chats and Projects don't transfer between profiles
 

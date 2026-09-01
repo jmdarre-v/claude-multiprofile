@@ -3,6 +3,46 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## 0.1.21 (2026-09-01)
+
+### Added
+
+- Per-profile Dock colours, closing
+  [#2](https://github.com/jmdarre-v/claude-multiprofile/issues/2).
+
+  The Dock tile of a running Claude Desktop window always showed the standard
+  icon, no matter what you did to the launcher, because the window belongs to
+  Claude's process and the launcher has already exited. Customising the
+  launcher could never reach it. That issue was previously closed as a known
+  limitation on the reasoning that the only alternative, a per-profile copy of
+  Claude.app, would break code signing. That reasoning was wrong and had not
+  been tested.
+
+  Choosing a colour during `add` now builds a tinted copy of Claude.app for
+  the profile and points the launcher at it, so the running process is the
+  thing carrying the colour. Eight colours, produced by hue-rotating Claude's
+  own icon.
+
+  Measured rather than assumed, on macOS 26.6 Apple Silicon: the copy is an
+  APFS clone costing about 1.5 seconds and 3MB of real disk against an 800MB
+  app, since the blocks stay shared. The tint is attached as Finder metadata
+  rather than by editing the bundle, so the copy keeps
+  `com.anthropic.claudefordesktop` and Anthropic's Team ID and is accepted by
+  Gatekeeper. `codesign --verify --deep --strict` does fail on it, as it does
+  for any bundle with a custom icon; that is stated in the README rather than
+  glossed over.
+
+  Off by default. Choosing no colour keeps the previous behaviour exactly.
+
+  No new dependencies and no build step: the tinting (`CIHueAdjust`) and the
+  icon attachment (`NSWorkspace.setIcon`) both run through `osascript -l
+  JavaScript`, which ships with macOS.
+
+- `doctor` reports a profile whose tinted copy was built from an older
+  Claude.app, since Claude updates itself and the copy does not, and a stale
+  copy would silently keep launching the old build. `doctor --fix` rebuilds
+  it. `remove` deletes the copy along with the profile.
+
 ## 0.1.20 (2026-09-01)
 
 ### Added

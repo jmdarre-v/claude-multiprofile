@@ -36,6 +36,7 @@ import {
   DEFAULT_APPLET_BUNDLE_ID,
 } from "../desktop.js";
 import { DEFAULT_CLAUDE_CONFIG_DIR, ghTokenOverride } from "../code.js";
+import { clonePathFor, cloneIsStale, cloneVersions, ensureColoredClone } from "../appclone.js";
 import { resyncDenyRules, auditDenyRules } from "../permissions.js";
 import { detectShell, rcPathForShell, readManagedAliases } from "../shell.js";
 import {
@@ -551,6 +552,53 @@ function checkLauncherEnv(t, reg, fix) {
   }
 }
 
+// ---- Check: coloured Claude clones ------------------------------------------
+//
+// A profile with a colour launches its own clone of Claude.app. Claude updates
+// itself, and the clone does not, so a stale clone silently runs an old build.
+// That is a worse failure than having no colour, so it is worth finding.
+
+function checkAppClones(t, reg, fix) {
+  if (!isMac()) return;
+  const colored = reg.profiles.filter((p) => p.desktop && p.desktop.color);
+  if (colored.length === 0) return;
+
+  step("Coloured Claude clones");
+
+  for (const p of colored) {
+    const clone = clonePathFor(p.name);
+    if (!fileExists(clone)) {
+      warn(`${p.name}: its ${p.desktop.color} clone is missing.`);
+      info("  The launcher points at a copy that is no longer there.");
+    } else if (!cloneIsStale(clone, p.desktop.claudeAppPath)) {
+      ok(`${p.name}: ${p.desktop.color}, matching Claude ${dim(cloneVersions(clone, p.desktop.claudeAppPath).source || "")}`);
+      continue;
+    } else {
+      const v = cloneVersions(clone, p.desktop.claudeAppPath);
+      warn(`${p.name}: clone is Claude ${v.clone}, but ${v.source} is installed.`);
+      info("  This profile would keep launching the older build.");
+    }
+
+    if (fix) {
+      try {
+        ensureColoredClone({
+          name: p.name,
+          claudeAppPath: p.desktop.claudeAppPath,
+          color: p.desktop.color,
+          force: true,
+        });
+        ok("  Repaired: clone rebuilt from the current Claude.app.");
+      } catch (e) {
+        err(`  Could not rebuild the clone: ${e.message}`);
+        t.problems++;
+      }
+    } else {
+      info(`  Repair with ${command("claude-multiprofile doctor --fix")}`);
+      t.warnings++;
+    }
+  }
+}
+
 // ---- Check: per-profile GitHub CLI isolation --------------------------------
 //
 // Two things can silently defeat it:
@@ -705,6 +753,7 @@ export async function doctor(args = []) {
   checkProfiles(t, reg);
   checkLauncherBundleIds(t, reg, fix);
   checkLauncherEnv(t, reg, fix);
+  checkAppClones(t, reg, fix);
   checkGhIsolation(t, reg, fix);
   checkDenyRules(t, reg, fix);
 

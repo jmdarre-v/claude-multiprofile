@@ -55,6 +55,7 @@ import {
   addAlias,
 } from "../code.js";
 import { detectShell, rcPathForShell } from "../shell.js";
+import { COLORS } from "../appclone.js";
 
 const LSREGISTER =
   "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
@@ -268,6 +269,7 @@ export async function add() {
           dataDir: desktopResult.dataDir,
           appPath: desktopResult.appPath,
           claudeAppPath: desktopResult.claudeAppPath,
+          color: desktopResult.color || null,
         }
       : null,
     code: codeResult
@@ -498,6 +500,7 @@ async function linkExisting(profile, missing) {
       dataDir: desktopResult.dataDir,
       appPath: desktopResult.appPath,
       claudeAppPath: desktopResult.claudeAppPath,
+      color: desktopResult.color || null,
     };
   } else if (next.code && profile.desktop) {
     // Existing launcher, newly linked Code target: the launcher must be
@@ -661,7 +664,29 @@ async function askDesktopQuestions(name) {
     default: true,
   });
 
-  return { name, dataDir, appPath, claudeAppPath, applyIcon };
+  // Per-profile Dock colour (issue #2). Opt-in: choosing none keeps exactly
+  // today's behaviour, launching the shared /Applications/Claude.app.
+  explain(`
+    Claude Desktop's Dock tile always shows the standard Claude icon, even
+    when you customise the launcher, because the running window belongs to
+    Claude itself rather than to the launcher.
+
+    Giving this profile a colour works around that: it launches a private
+    copy of Claude.app tinted that colour, so the running window's Dock tile
+    is finally distinguishable. The copy is an APFS clone, which costs a few
+    megabytes rather than a few hundred, and Anthropic's signature stays
+    intact so your login keeps working.
+  `);
+  const color = await select({
+    message: "Dock colour for this profile:",
+    choices: [
+      { name: "none (standard Claude icon)", value: null },
+      ...Object.keys(COLORS).map((c) => ({ name: c, value: c })),
+    ],
+    default: null,
+  });
+
+  return { name, dataDir, appPath, claudeAppPath, applyIcon, color };
 }
 
 // ===========================================================================

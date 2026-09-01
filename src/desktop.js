@@ -40,6 +40,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { ensureColoredClone, applyColor } from "./appclone.js";
 import {
   HOME,
   pathStr,
@@ -377,7 +378,16 @@ export function copyClaudeIcon(appPath, claudeAppPath) {
 
 // ---- Top-level orchestration -------------------------------------
 
-export function setupDesktop({ name, dataDir, appPath, claudeAppPath, applyIcon, codeConfigDir, ghConfigDir }) {
+export function setupDesktop({
+  name,
+  dataDir,
+  appPath,
+  claudeAppPath,
+  applyIcon,
+  codeConfigDir,
+  ghConfigDir,
+  color,
+}) {
   // Wraps the whole setup. Returns a summary the wizard can save to the
   // registry and print to the user.
   step(`Creating Claude Desktop profile "${name}"`);
@@ -390,14 +400,50 @@ export function setupDesktop({ name, dataDir, appPath, claudeAppPath, applyIcon,
   ensureDataDir(dataDir);
   ok("Data folder ready.");
 
-  compileApp({ name, dataDir, appPath, claudeAppPath, codeConfigDir, ghConfigDir });
+  // A colour means the launcher opens a per-profile CLONE of Claude.app that
+  // carries the tint, rather than the shared /Applications/Claude.app. That is
+  // what puts the colour on the Dock tile of the running window: the running
+  // process becomes the clone. See src/appclone.js for why this is cheap and
+  // what it costs.
+  let launchTarget = claudeAppPath;
+  let clonePath = null;
+  if (color) {
+    try {
+      clonePath = ensureColoredClone({ name, claudeAppPath, color });
+      launchTarget = clonePath;
+      ok(`Coloured Claude clone ready (${color}).`);
+    } catch (e) {
+      warn(`Could not build the coloured clone: ${e.message}`);
+      warn("Falling back to the shared Claude.app, so the Dock tile stays the standard icon.");
+      color = null;
+    }
+  }
+
+  compileApp({
+    name,
+    dataDir,
+    appPath,
+    claudeAppPath: launchTarget,
+    codeConfigDir,
+    ghConfigDir,
+  });
   ok("Launcher .app compiled.");
 
   if (applyIcon) {
     const applied = copyClaudeIcon(appPath, claudeAppPath);
     if (applied) ok("Claude icon applied to launcher.");
     else warn("Could not locate a Claude icon to copy. Default AppleScript icon left in place.");
+    // Tint the launcher too, so the icon you drag to the Dock matches the
+    // window it opens instead of disagreeing with it.
+    if (color && clonePath) {
+      try {
+        applyColor(appPath, claudeAppPath, color);
+        ok("Launcher tinted to match.");
+      } catch {
+        // Non-fatal: the running app is what issue #2 is about.
+      }
+    }
   }
 
-  return { dataDir, appPath, claudeAppPath };
+  return { dataDir, appPath, claudeAppPath, color: color || null, clonePath };
 }

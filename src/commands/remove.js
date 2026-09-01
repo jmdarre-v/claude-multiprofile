@@ -12,6 +12,7 @@ import { select, confirm } from "@inquirer/prompts";
 import { getRegistry, removeFromRegistry } from "../registry.js";
 import { removeAlias } from "../code.js";
 import { resyncDenyRules, stripManagedDenyRules } from "../permissions.js";
+import { removeClone } from "../appclone.js";
 import {
   header,
   ok,
@@ -107,6 +108,13 @@ export async function remove(args) {
       }
     } else {
       info("Launcher already gone, skipping.");
+    }
+
+    // The coloured clone is ours, derived entirely from Claude.app, and holds
+    // no user data. Remove it without asking; keeping it would strand a few
+    // hundred megabytes of apparent size the user never chose to keep.
+    if (removeClone(profile.name)) {
+      ok("Removed this profile's coloured Claude clone.");
     }
 
     const wipeDesktopData = await confirm({
