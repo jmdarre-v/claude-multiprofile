@@ -411,6 +411,22 @@ function checkProfiles(t, reg) {
 const LSREGISTER =
   "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
 
+// After changing anything inside a launcher bundle, tell the system about it.
+// Finder and the Dock cache an app's icon against the bundle, so a rewritten
+// Info.plist with an unchanged bundle mtime shows up as a stale or blank tile.
+function refreshLauncher(appPath) {
+  try {
+    execFileSync("/usr/bin/touch", [appPath]);
+  } catch {
+    // Non-fatal.
+  }
+  try {
+    execFileSync(LSREGISTER, ["-f", appPath], { stdio: "pipe" });
+  } catch {
+    // Non-fatal; registration catches up on its own.
+  }
+}
+
 function checkLauncherBundleIds(t, reg, fix) {
   if (!isMac()) return;
   const launchers = reg.profiles.filter(
@@ -434,6 +450,11 @@ function checkLauncherBundleIds(t, reg, fix) {
       if (isUiElement(p.desktop.appPath) === false) {
         if (fix) {
           if (setUiElement(p.desktop.appPath, true)) {
+            // Editing Info.plist without touching the bundle leaves Finder and
+            // the Dock showing whatever icon they cached, which reads as a
+            // blank tile. `repair` has always done this; --fix did not, and
+            // that is what made a repaired launcher look broken.
+            refreshLauncher(p.desktop.appPath);
             ok("  Repaired: launcher no longer takes its own Dock tile.");
           }
         } else {
@@ -553,11 +574,7 @@ function checkLauncherEnv(t, reg, fix) {
         ghConfigDir: p.code.ghConfigDir || undefined,
       });
       copyClaudeIcon(p.desktop.appPath, p.desktop.claudeAppPath);
-      try {
-        execFileSync(LSREGISTER, ["-f", p.desktop.appPath], { stdio: "pipe" });
-      } catch {
-        // Non-fatal: the rebuilt bundle still works, registration catches up.
-      }
+      refreshLauncher(p.desktop.appPath);
       ok(`  Repaired: launcher rebuilt and now exports ${tildify(expected)}`);
     } catch (e) {
       err(`  Could not rebuild the launcher: ${e.message}`);

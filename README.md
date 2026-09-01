@@ -93,6 +93,10 @@ That tile belongs to Claude itself rather than to the launcher, because the laun
 
 Since v0.1.22 the launcher no longer takes a Dock tile of its own, so the only tile you see while a profile runs is its actual Claude window, and there is nothing ambiguous to drag. Rebuilding a launcher (through `rename`, `doctor --fix`, or linking a missing half) also preserves the bundle rather than replacing it, so an existing pin keeps working.
 
+Since v0.1.23, clicking the icon again focuses the profile's existing window rather than opening a second copy. Each Desktop profile launches its own cloned copy of Claude.app, so `open` can address that profile specifically instead of forcing a new instance the way it must when profiles share one app.
+
+One thing that cannot be fixed: the running window is titled "Claude", not the profile name. That comes from `CFBundleName` inside the app, and editing it fails code signing and Gatekeeper. Give profiles different colours if you need to tell their windows apart.
+
 Launchers created before v0.1.22 still take a tile until they are updated. `claude-multiprofile doctor` reports them and `doctor --fix` or `repair` brings them up to date.
 
 ### Per-profile Dock colours

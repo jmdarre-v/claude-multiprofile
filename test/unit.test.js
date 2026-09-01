@@ -744,6 +744,43 @@ test("compileApp: rebuilding keeps the same bundle, so a Dock pin survives", asy
   assert.equal(d.launcherCodeConfigDir(app), "/cfg");
 });
 
+test("buildLaunchAppleScript: -n only when the bundle is shared", async () => {
+  const d = await import("../src/desktop.js");
+  // Shared /Applications/Claude.app: without -n, macOS routes the request to
+  // whatever Claude is already running and drops --user-data-dir, silently
+  // opening the wrong profile. -n is mandatory there.
+  const shared = d.buildLaunchAppleScript("/data", "/Applications/Claude.app");
+  assert.match(shared, / -n -a /);
+
+  // A per-profile clone is unambiguous, so `open -a` focuses the profile's
+  // existing window instead of stacking another copy on every Dock click.
+  const dedicated = d.buildLaunchAppleScript("/data", "/clones/C.app", null, null, true);
+  assert.ok(!/ -n /.test(dedicated), "no -n when the bundle belongs to one profile");
+  assert.match(dedicated, /open -a '\/clones\/C\.app'/);
+
+  // The env vars ride along either way.
+  const both = d.buildLaunchAppleScript("/data", "/clones/C.app", "/cfg", "/cfg/gh", true);
+  assert.ok(both.includes("CLAUDE_CONFIG_DIR=/cfg"));
+  assert.ok(both.includes("GH_CONFIG_DIR=/cfg/gh"));
+  assert.ok(both.lastIndexOf("--env") < both.indexOf("--args"));
+});
+
+test("ensureColoredClone accepts no colour, so every profile gets a bundle", async () => {
+  const c = await import("../src/appclone.js");
+  // A dedicated bundle is what allows dropping -n; the tint is optional on
+  // top of it. Only a bogus colour should be rejected.
+  assert.throws(
+    () => c.ensureColoredClone({ name: "x", claudeAppPath: "/nope.app", color: "mauve" }),
+    /Unknown colour/
+  );
+  // null/undefined get past the colour check and fail later on the missing
+  // Claude.app, which proves they are not rejected as colours.
+  assert.throws(
+    () => c.ensureColoredClone({ name: "x", claudeAppPath: "/nope.app", color: null }),
+    /not found/
+  );
+});
+
 test("setUiElement / isUiElement round-trip", async (t) => {
   if (process.platform !== "darwin") {
     t.skip("PlistBuddy is macOS only");

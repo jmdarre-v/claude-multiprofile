@@ -109,7 +109,7 @@ export function ensureDataDir(dataDir) {
 
 // ---- .app bundle generation ----------------------------------------
 
-export function buildLaunchAppleScript(dataDir, claudeAppPath, codeConfigDir, ghConfigDir) {
+export function buildLaunchAppleScript(dataDir, claudeAppPath, codeConfigDir, ghConfigDir, dedicatedBundle = false) {
   // The `open -n` flag forces a new instance even when Claude is already
   // running. Without -n, macOS would route the request to the existing
   // Claude window and ignore our --user-data-dir argument entirely.
@@ -153,8 +153,19 @@ export function buildLaunchAppleScript(dataDir, claudeAppPath, codeConfigDir, gh
   // GitHub CLI login. Without it, Claude Code opened from inside Desktop
   // would use the profile's Claude config but the machine's default gh
   // account, which is a confusing half-isolation.
+  // `-n` forces a brand new instance. It is required when the launch target is
+  // the SHARED /Applications/Claude.app, because without it macOS routes the
+  // request to whatever Claude is already running and drops our
+  // --user-data-dir entirely, silently opening the wrong profile.
+  //
+  // When the profile has its own cloned bundle, that reasoning inverts.
+  // Nothing else runs from that path, so `open -a <clone>` targets exactly
+  // this profile: it launches the app if it is not running, and focuses the
+  // existing window if it is. Dropping `-n` there is what stops every click
+  // on the Dock icon from stacking up another copy.
+  const newInstance = dedicatedBundle ? "" : "-n ";
   const cmd =
-    `open -n -a ${shellQuote(claudeAppPath)} ` +
+    `open ${newInstance}-a ${shellQuote(claudeAppPath)} ` +
     (codeConfigDir ? `--env ${shellQuote(`CLAUDE_CONFIG_DIR=${codeConfigDir}`)} ` : "") +
     (ghConfigDir ? `--env ${shellQuote(`GH_CONFIG_DIR=${ghConfigDir}`)} ` : "") +
     `--args --user-data-dir=${shellQuote(dataDir)} > /dev/null 2>&1 &`;
@@ -344,11 +355,11 @@ export function stripQuarantine(appPath) {
   }
 }
 
-export function compileApp({ name, dataDir, appPath, claudeAppPath, codeConfigDir, ghConfigDir }) {
+export function compileApp({ name, dataDir, appPath, claudeAppPath, codeConfigDir, ghConfigDir, dedicatedBundle = false }) {
   // We write the AppleScript to a temp file then run `osacompile` to turn
   // it into a real .app bundle. osacompile is part of macOS, no install
   // needed.
-  const script = buildLaunchAppleScript(dataDir, claudeAppPath, codeConfigDir, ghConfigDir);
+  const script = buildLaunchAppleScript(dataDir, claudeAppPath, codeConfigDir, ghConfigDir, dedicatedBundle);
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "cp-"));
   const scriptPath = path.join(tmpDir, "launcher.applescript");
   fs.writeFileSync(scriptPath, script, "utf8");
@@ -471,18 +482,25 @@ export function setupDesktop({
   // what puts the colour on the Dock tile of the running window: the running
   // process becomes the clone. See src/appclone.js for why this is cheap and
   // what it costs.
+  // Every Desktop profile gets its own clone, tinted or not. Two reasons:
+  //
+  //   1. A dedicated bundle is what lets the launcher use `open -a <clone>`
+  //      instead of `open -n`, so clicking the Dock icon focuses the profile's
+  //      existing window rather than opening yet another copy of it.
+  //   2. A colour, when chosen, has somewhere to live.
+  //
+  // The clone is an APFS copy: a couple of seconds and a few megabytes,
+  // because the blocks stay shared with the original.
   let launchTarget = claudeAppPath;
   let clonePath = null;
-  if (color) {
-    try {
-      clonePath = ensureColoredClone({ name, claudeAppPath, color });
-      launchTarget = clonePath;
-      ok(`Coloured Claude clone ready (${color}).`);
-    } catch (e) {
-      warn(`Could not build the coloured clone: ${e.message}`);
-      warn("Falling back to the shared Claude.app, so the Dock tile stays the standard icon.");
-      color = null;
-    }
+  try {
+    clonePath = ensureColoredClone({ name, claudeAppPath, color: color || null });
+    launchTarget = clonePath;
+    ok(color ? `Claude clone ready (${color}).` : "Claude clone ready for this profile.");
+  } catch (e) {
+    warn(`Could not build this profile's Claude clone: ${e.message}`);
+    warn("Falling back to the shared Claude.app. Each click will open a new window.");
+    color = null;
   }
 
   compileApp({
@@ -492,6 +510,7 @@ export function setupDesktop({
     claudeAppPath: launchTarget,
     codeConfigDir,
     ghConfigDir,
+    dedicatedBundle: Boolean(clonePath),
   });
   ok("Launcher .app compiled.");
 

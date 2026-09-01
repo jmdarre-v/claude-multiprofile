@@ -164,7 +164,14 @@ export function cloneVersions(clonePath, claudeAppPath) {
 
 // Create (or refresh) a profile's coloured clone. Returns the clone path.
 export function ensureColoredClone({ name, claudeAppPath, color, force = false }) {
-  if (!isColor(color)) throw new Error(`Unknown colour: ${color}`);
+  // A null colour is allowed: every Desktop profile gets its own bundle so the
+  // launcher can target it specifically, and the tint is an optional extra on
+  // top. Without a dedicated bundle there is no way to tell "this profile's
+  // Claude" apart from any other, which is what forced `open -n` and made
+  // every Dock click stack up another window.
+  if (color !== null && color !== undefined && !isColor(color)) {
+    throw new Error(`Unknown colour: ${color}`);
+  }
   if (!fileExists(claudeAppPath)) {
     throw new Error(`Claude.app not found at ${claudeAppPath}`);
   }
@@ -181,7 +188,7 @@ export function ensureColoredClone({ name, claudeAppPath, color, force = false }
     }
   }
 
-  applyColor(clonePath, claudeAppPath, color);
+  if (color) applyColor(clonePath, claudeAppPath, color);
   return clonePath;
 }
 

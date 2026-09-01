@@ -3,6 +3,39 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## 0.1.23 (2026-09-01)
+
+### Fixed
+
+- Clicking a profile's Dock icon focuses its window instead of opening
+  another copy of it. The launcher used `open -n`, which forces a brand new
+  instance every time. That flag was necessary while profiles shared
+  `/Applications/Claude.app`, because without it macOS routes the request to
+  whatever Claude is already running and drops `--user-data-dir`, silently
+  opening the wrong profile.
+
+  Every Desktop profile now gets its own cloned bundle, not only coloured
+  ones. Nothing else runs from that path, so `open -a <clone>` addresses
+  exactly one profile: it launches if the profile is closed and focuses it if
+  it is already open. The clone costs a couple of seconds and a few megabytes,
+  since APFS keeps the blocks shared.
+
+- `doctor --fix` refreshes the launcher after editing its `Info.plist`.
+  Finder and the Dock cache an app's icon against its bundle, so rewriting
+  the plist without touching the bundle left the pinned icon blank. 0.1.22
+  introduced that when it started setting `LSUIElement` through `--fix`;
+  `repair` had always done the refresh, and `--fix` did not. Every `--fix`
+  path that rewrites a bundle now goes through one helper that touches it and
+  re-registers it with LaunchServices.
+
+### Known limitation
+
+The running window is still titled "Claude" rather than the profile name.
+That comes from `CFBundleName` inside the app, and changing it means editing
+`Info.plist`, which fails `codesign` and Gatekeeper outright. The icon can
+differ per profile; the name cannot, short of re-signing and losing the
+Keychain login.
+
 ## 0.1.22 (2026-09-01)
 
 Both changes target the same complaint: a pinned profile icon that keeps
