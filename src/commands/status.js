@@ -23,6 +23,7 @@ import {
   fileExists,
   command,
   dim,
+  printLaunchHints,
 } from "../util.js";
 
 export async function status() {
@@ -133,6 +134,8 @@ export async function status() {
         `    Re-run ${command(`claude-multiprofile add`)} for this profile, or fix manually.`
       );
     }
+
+    printLaunchHints(p);
     console.log("");
   }
 

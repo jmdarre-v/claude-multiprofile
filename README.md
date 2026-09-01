@@ -131,6 +131,8 @@ One caveat `doctor` will warn you about: if `GH_TOKEN` or `GITHUB_TOKEN` is expo
 
 Prints every configured profile with its paths and creation date, plus the `claude` binary currently winning on your PATH and its version. All profiles share that one binary, so it is worth seeing alongside them.
 
+Each profile ends with a "To launch" block naming the exact command. Worth reading rather than inferring: profile names of four characters or fewer are uppercased in the paths this tool creates, so `ipsy` becomes `Claude-IPSY` on disk while the command stays `claude-ipsy`, and shell command names are case-sensitive.
+
 ### `claude-multiprofile status`
 
 Walks every profile and verifies the directories, .app, and shell aliases still exist. Also reports the resolved `claude` binary and warns when more than one is on your PATH. Useful after a machine migration or after manually editing your `.zshrc`.

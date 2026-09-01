@@ -151,6 +151,31 @@ export function sanitizeName(name) {
     .replace(/-{2,}/g, "-");
 }
 
+// Print how to actually start a profile.
+//
+// This exists because the display paths and the command you type disagree in
+// case. `titleCase` uppercases short names, so a profile called `ipsy` shows
+// up as `Claude-IPSY` and `Claude IPSY.app` everywhere, while the command is
+// `claude-ipsy`. Every prominent string shouts the wrong casing, and shell
+// command names are case-sensitive, so the natural guess fails with "command
+// not found". Rather than change the casing (which would move real folders
+// out from under existing profiles), we print the exact runnable command.
+export function printLaunchHints(profile) {
+  const lines = [];
+  if (profile.code && profile.code.aliasName) {
+    lines.push([profile.code.aliasName, "Claude Code, in a terminal"]);
+  }
+  if (profile.desktop && profile.desktop.appPath) {
+    lines.push([`open "${tildify(profile.desktop.appPath)}"`, "Claude Desktop"]);
+  }
+  if (lines.length === 0) return;
+
+  console.log(`    ${dim("To launch:")}`);
+  for (const [cmd, what] of lines) {
+    console.log(`      ${command(cmd)}  ${dim(`(${what})`)}`);
+  }
+}
+
 export function compareVersions(a, b) {
   // Numeric dotted-version compare: negative if a < b, 0 if equal, positive
   // if a > b. Enough for our x.y.z versions; no prerelease handling needed.

@@ -3,6 +3,24 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## 0.1.20 (2026-09-01)
+
+### Added
+
+- `list` and `status` now print the exact command to start each profile.
+
+  Profile names of four characters or fewer are uppercased in the paths the
+  tool creates, so a profile named `ipsy` appears everywhere as
+  `Claude-IPSY` and `Claude IPSY.app` while the command to run it is
+  `claude-ipsy`. Shell command names are case-sensitive, so reading the
+  prominent uppercase form and typing it back gives "command not found", and
+  nothing in the output contradicts that reading. Both commands now end each
+  profile with a "To launch" block naming the alias verbatim and the `open`
+  command for the Desktop launcher.
+
+  The casing itself is unchanged, since altering it would move the folders
+  and launchers of every existing profile.
+
 ## 0.1.19 (2026-09-01)
 
 ### Added

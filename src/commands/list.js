@@ -15,7 +15,7 @@
 import { getRegistry, registryLocation, registryHealth } from "../registry.js";
 import { detectDefaults } from "../detect.js";
 import { resolveClaude } from "../claudebin.js";
-import { header, info, warn, pathStr, tildify, command, dim } from "../util.js";
+import { header, info, warn, pathStr, tildify, command, dim, printLaunchHints } from "../util.js";
 
 export async function list() {
   header("Claude installs and profiles");
@@ -88,6 +88,7 @@ export async function list() {
       console.log(`    Code alias:      ${p.code.aliasName}`);
     }
     console.log(`    Created:         ${p.createdAt.split("T")[0]}`);
+    printLaunchHints(p);
     console.log("");
   }
 

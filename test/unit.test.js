@@ -17,6 +17,36 @@ import path from "node:path";
 
 import { sanitizeName, titleCase, expandHome, tildify, compareVersions } from "../src/util.js";
 
+test("printLaunchHints: prints the lowercase command, not the uppercased path", async (t) => {
+  const { printLaunchHints } = await import("../src/util.js");
+  // titleCase uppercases short names, so a profile called `ipsy` displays as
+  // Claude-IPSY / "Claude IPSY.app" while the command is `claude-ipsy`. This
+  // hint exists so the case-sensitive thing you type is stated outright.
+  const lines = [];
+  const orig = console.log;
+  console.log = (s) => lines.push(String(s));
+  t.after(() => { console.log = orig; });
+
+  printLaunchHints({
+    name: "ipsy",
+    code: { aliasName: "claude-ipsy" },
+    desktop: { appPath: "/Users/x/Applications/Claude IPSY.app" },
+  });
+  console.log = orig;
+
+  const out = lines.join("\n");
+  assert.match(out, /claude-ipsy/, "the alias is shown verbatim");
+  assert.match(out, /Claude IPSY\.app/, "the Desktop path is shown as it is on disk");
+  assert.match(out, /To launch/);
+
+  // A profile with neither half prints nothing rather than an empty header.
+  const before = lines.length;
+  console.log = (s) => lines.push(String(s));
+  printLaunchHints({ name: "x", code: null, desktop: null });
+  console.log = orig;
+  assert.equal(lines.length, before, "nothing to launch means no output");
+});
+
 test("compareVersions: orders dotted versions numerically", () => {
   assert.ok(compareVersions("0.1.9", "0.1.10") < 0, "9 < 10 numerically, not lexically");
   assert.ok(compareVersions("0.1.11", "0.1.10") > 0);
