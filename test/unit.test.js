@@ -626,6 +626,21 @@ test("missingTargets: an existing name is only taken when nothing is left to add
 // 644, so `claude` failed with `permission denied` while every structural
 // check passed.
 
+test("parseReportedVersion: pulls the version out of decorated --version output", async () => {
+  const { parseReportedVersion } = await import("../src/commands/doctor.js");
+  // The real case: the command reports a build that does not match its package.
+  assert.equal(parseReportedVersion("2.1.126 (Claude Code)"), "2.1.126");
+  assert.equal(parseReportedVersion("v1.2.3"), "1.2.3");
+  assert.equal(parseReportedVersion("0.1.19\n"), "0.1.19");
+  assert.equal(parseReportedVersion("tool version 10.20.30 (build abc)"), "10.20.30");
+  // Two-part versions still count.
+  assert.equal(parseReportedVersion("1.2"), "1.2");
+  // Nothing version-shaped is a normal outcome, not an error.
+  assert.equal(parseReportedVersion("no version here"), null);
+  assert.equal(parseReportedVersion(""), null);
+  assert.equal(parseReportedVersion(null), null);
+});
+
 test("binTargetsFor: handles both npm bin shapes and ignores junk", async () => {
   const { binTargetsFor } = await import("../src/commands/doctor.js");
 

@@ -3,6 +3,25 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## 0.1.19 (2026-09-01)
+
+### Added
+
+- `doctor` compares the version a command reports against the version its
+  package claims. An install step that fetches an artifact not matching the
+  manifest leaves everything looking healthy while the command you run is a
+  different build entirely, which is the whole "I upgraded and nothing
+  changed" trap. Found on a real machine where `claude --version` reported
+  2.1.126 under a package declaring 2.1.240.
+
+### Fixed
+
+- The per-package summary line can no longer contradict the detail above it.
+  It previously printed "install looks intact" directly beneath a warning
+  about that same package, which is the false reassurance 0.1.18 set out to
+  remove. Summaries now distinguish an unusable command, a usable one with a
+  caveat, and a clean install.
+
 ## 0.1.18 (2026-08-22)
 
 ### Fixed

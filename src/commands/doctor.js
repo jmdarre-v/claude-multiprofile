@@ -117,20 +117,20 @@ function globalNodeModules() {
   }
 }
 
-// Validate what a package declares as its executable, rather than inferring
-// health from directory structure.
-//
-// The failure this exists for: Claude Code 2.1.240 shipped with a postinstall
-// that downloads a platform-native binary and then finishes wiring up
-// `bin/claude.exe`. When that postinstall stops partway, you are left with a
-// perfect package.json, a downloaded binary, and a `bin` entry that is still
-// the 500-byte "not installed" stub at mode 644. Every structural check
-// passes while `claude` cannot start at all. Checking the manifest and
-// declaring victory is worse than saying nothing, because it actively points
-// the user away from the real fault.
-//
-// Returns the number of problems found so the caller can phrase its summary
-// honestly.
+// Pull a version out of whatever a command prints for `--version`. Tools pad
+// it differently ("2.1.126 (Claude Code)", "v1.2.3", a bare "0.1.19"), so we
+// take the first dotted-numeric token and ignore the decoration. Returns null
+// when there is nothing version-shaped, which is a normal outcome and not an
+// error.
+export function parseReportedVersion(output) {
+  // No leading \b: there is no word boundary between the "v" and the "1" of
+  // "v1.2.3" (both are word characters), so requiring one would skip the
+  // start and match "2.3" out of the middle. The trailing guard stops the
+  // match from ending mid-number.
+  const m = String(output || "").match(/(\d+\.\d+(?:\.\d+)?)(?![\d.])/);
+  return m ? m[1] : null;
+}
+
 // Resolve a package's `bin` field into { commandName: absolutePath }. npm
 // allows either a bare string (one command, named after the package) or a map.
 // Pure, so the shape handling is testable without a filesystem.
@@ -148,14 +148,30 @@ export function binTargetsFor(dir, pkg) {
   return out;
 }
 
+// Validate what a package declares as its executable, rather than inferring
+// health from directory structure.
+//
+// The failure this exists for: Claude Code 2.1.240 shipped with a postinstall
+// that downloads a platform-native binary and then finishes wiring up
+// `bin/claude.exe`. When that postinstall stops partway, you are left with a
+// perfect package.json, a downloaded binary, and a `bin` entry that is still
+// the 500-byte "not installed" stub at mode 644. Every structural check
+// passes while `claude` cannot start at all. Checking the manifest and
+// declaring victory is worse than saying nothing, because it actively points
+// the user away from the real fault.
+//
+// Returns { problems, warnings } so the caller's one-line summary cannot
+// contradict the detail printed above it. Saying "looks intact" directly under
+// a warning is the same false reassurance this check exists to remove.
 function checkBinTargets(dir, pkg, t) {
-  let issues = 0;
+  let problems = 0;
+  let warnings = 0;
 
   for (const [cmdName, target] of Object.entries(binTargetsFor(dir, pkg))) {
     const rel = path.relative(dir, target);
     if (!fileExists(target)) {
       err(`  "${cmdName}" points at ${rel}, which does not exist.`);
-      issues++;
+      problems++;
       t.problems++;
       continue;
     }
@@ -168,7 +184,7 @@ function checkBinTargets(dir, pkg, t) {
     } catch {
       err(`  "${cmdName}" (${rel}) is not executable.`);
       info("    A shell that finds it will fail with `permission denied`.");
-      issues++;
+      problems++;
       t.problems++;
       suggestPostinstall(dir, pkg);
       continue;
@@ -183,7 +199,7 @@ function checkBinTargets(dir, pkg, t) {
     });
     if (probe.error) {
       err(`  "${cmdName}" could not be executed: ${probe.error.message}`);
-      issues++;
+      problems++;
       t.problems++;
     } else if (probe.signal) {
       err(`  "${cmdName}" was killed by ${probe.signal} when run.`);
@@ -191,20 +207,34 @@ function checkBinTargets(dir, pkg, t) {
         info("    On Apple Silicon this usually means the binary is unsigned");
         info("    or its signature is invalid, so the kernel refuses to start it.");
       }
-      issues++;
+      problems++;
       t.problems++;
       suggestPostinstall(dir, pkg);
     } else if (probe.status !== 0) {
       err(`  "${cmdName}" exited ${probe.status} when run.`);
       const out = `${probe.stdout || ""}${probe.stderr || ""}`.trim().split("\n")[0];
       if (out) info(`    It said: ${out}`);
-      issues++;
+      problems++;
       t.problems++;
       suggestPostinstall(dir, pkg);
+    } else {
+      // It runs. That still leaves one way to be wrong: the command can be a
+      // different build than the package describing it, which happens when an
+      // install step fetches an artifact that does not match the manifest.
+      // Everything looks healthy and you are simply not running the version
+      // you think, which is the whole "I upgraded and nothing changed" trap.
+      const reported = parseReportedVersion(`${probe.stdout || ""}${probe.stderr || ""}`);
+      if (reported && pkg.version && reported !== pkg.version) {
+        warn(`  "${cmdName}" reports ${reported}, but the package says ${pkg.version}.`);
+        info("    The installed command is not the build this package describes.");
+        info(`    Reinstall to line them up: ${command(`npm install -g ${pkg.name || path.basename(dir)}@latest --force`)}`);
+        warnings++;
+        t.warnings++;
+      }
     }
   }
 
-  return issues;
+  return { problems, warnings };
 }
 
 function suggestPostinstall(dir, pkg) {
@@ -256,9 +286,14 @@ function checkBrokenInstalls(t) {
       // A present package.json is NOT proof the command works. Verify what the
       // package actually declares as its executable, because a half-finished
       // postinstall leaves the manifest perfect and the binary unusable.
-      const binIssues = checkBinTargets(dir, pkg, t);
-      if (binIssues === 0) ok(`${label} install looks intact.`);
-      else warn(`${label}: package metadata is fine but its command is not usable.`);
+      const bin = checkBinTargets(dir, pkg, t);
+      if (bin.problems > 0) {
+        warn(`${label}: package metadata is fine but its command is not usable.`);
+      } else if (bin.warnings > 0) {
+        warn(`${label} is installed, but see the note above.`);
+      } else {
+        ok(`${label} install looks intact.`);
+      }
     }
   }
 
