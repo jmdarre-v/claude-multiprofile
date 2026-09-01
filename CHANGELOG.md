@@ -3,6 +3,39 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## 0.1.24 (2026-09-01)
+
+Three fixes for one long-standing complaint: a profile's Dock icon that
+showed blank, would not stay pinned, and opened a new window on every click.
+Earlier releases guessed at this. These are the measured causes.
+
+### Fixed
+
+- **Blank Dock icon.** `osacompile` emits a compiled asset catalog
+  (`Assets.car`) holding the stock AppleScript icon, and points
+  `CFBundleIconName` at it. macOS prefers the catalog over
+  `CFBundleIconFile`, so the Claude icon copied onto `applet.icns` was never
+  what the Dock read. Verified by comparing a launcher's catalog against a
+  freshly compiled applet's: byte-identical. Finder and Get Info read the
+  `.icns` and looked correct throughout, which is what made this hard to see.
+  Launchers now have the catalog and its key removed, leaving `applet.icns`
+  as the only icon source.
+
+- **Launcher would not stay pinned or relaunch.** 0.1.22 set `LSUIElement` to
+  hide the launcher's brief Dock tile. That was a mistake: `LSUIElement`
+  marks an app as a background agent, and macOS does not keep agent apps
+  pinned or reliably relaunch them from a pin. The flicker it removed was
+  cosmetic; what it broke was not. Reverted.
+
+- **Every click opened another window.** Profiles created before 0.1.23 have
+  no dedicated copy of Claude.app, so their launcher still uses `open -n`,
+  which forces a new instance. `doctor --fix` now builds the copy and
+  rebuilds the launcher to target it, so existing profiles get the same
+  focus-instead-of-duplicate behaviour as new ones.
+
+`repair` and `doctor --fix` both apply all three to launchers built by
+earlier versions.
+
 ## 0.1.23 (2026-09-01)
 
 ### Fixed

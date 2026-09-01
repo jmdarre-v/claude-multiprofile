@@ -269,17 +269,46 @@ export function getBundleId(appPath) {
   }
 }
 
-// Hide the launcher's own Dock tile.
+// Set or clear LSUIElement on a launcher.
 //
-// The launcher spawns Claude and exits within about a second, so its tile
-// flashes up next to Claude's own and then vanishes. That is what makes the
-// Dock confusing: two tiles for what the user thinks of as one app, and the
-// one that persists is Claude's, so dragging it to the Dock pins the SHARED
-// Claude.app rather than the profile. LSUIElement stops the launcher from
-// ever taking a tile, leaving exactly one: the profile's running window.
-//
-// Safe to edit here, unlike Claude.app: this bundle is ours, produced by
-// osacompile, so there is no Anthropic signature to invalidate.
+// v0.1.22 set this to hide the launcher's brief Dock tile. That was a mistake:
+// LSUIElement marks an app as a background agent, and macOS does not keep
+// agent apps pinned in the Dock or relaunch them reliably from a pin. The
+// symptom was a launcher that showed a blank tile, would not stay pinned, and
+// would not reopen after quitting. v0.1.24 clears it again. Kept as a function
+// so existing launchers can be repaired.
+// Remove the compiled asset catalog so CFBundleIconFile (applet.icns) is used.
+// See the note in compileApp for why this is load-bearing.
+export function stripAssetCatalog(appPath) {
+  let changed = false;
+  const plist = path.join(appPath, "Contents", "Info.plist");
+  if (fileExists(plist)) {
+    try {
+      execFileSync(PLIST_BUDDY, ["-c", "Delete :CFBundleIconName", plist], {
+        stdio: "pipe",
+      });
+      changed = true;
+    } catch {
+      // Key already absent.
+    }
+  }
+  const car = path.join(appPath, "Contents", "Resources", "Assets.car");
+  if (fileExists(car)) {
+    try {
+      fs.rmSync(car);
+      changed = true;
+    } catch {
+      // Non-fatal.
+    }
+  }
+  return changed;
+}
+
+// True when a launcher still has the asset catalog shadowing its icon.
+export function hasAssetCatalog(appPath) {
+  return fileExists(path.join(appPath, "Contents", "Resources", "Assets.car"));
+}
+
 export function setUiElement(appPath, hidden = true) {
   const plist = path.join(appPath, "Contents", "Info.plist");
   if (!fileExists(plist)) return false;
@@ -397,9 +426,16 @@ export function compileApp({ name, dataDir, appPath, claudeAppPath, codeConfigDi
   // in LaunchServices (see notes on uniqueBundleId).
   setBundleId(appPath, uniqueBundleId(name));
 
-  // Keep the launcher out of the Dock while it runs, so the only tile is the
-  // profile's actual Claude window.
-  setUiElement(appPath, true);
+  // Make applet.icns the ONLY icon source.
+  //
+  // osacompile emits a compiled asset catalog (Assets.car) holding the stock
+  // AppleScript icon, and points CFBundleIconName at it. macOS prefers the
+  // catalog over CFBundleIconFile, so replacing applet.icns with Claude's icon
+  // changed nothing that the Dock actually reads: the tile stayed generic
+  // while Finder and Get Info showed the right icon, which is what made this
+  // so easy to misdiagnose. Deleting the catalog and its Info.plist key leaves
+  // applet.icns as the only candidate.
+  stripAssetCatalog(appPath);
 
   // Best-effort cleanup of the temp file.
   try {

@@ -26,6 +26,7 @@ import {
   uniqueBundleId,
   setUiElement,
   isUiElement,
+  stripAssetCatalog,
 } from "../desktop.js";
 import {
   header,
@@ -134,16 +135,25 @@ export async function repair(args) {
     ok("Cleared quarantine attribute (if any).");
   }
 
-  // ---- Keep the launcher out of the Dock ---------------------------------
+  // ---- Make the launcher's own icon the one macOS uses -------------------
   //
-  // The launcher spawns Claude and exits, so its tile flashes up beside
-  // Claude's own. Two tiles for one apparent app is what leads people to drag
-  // the wrong one to the Dock, pinning the shared Claude.app instead of the
-  // profile. Launchers built before v0.1.22 do not have this set, and repair
-  // is the natural place to bring them up to date.
-  if (isUiElement(appPath) === false) {
-    if (setUiElement(appPath, true)) {
-      ok("Launcher will no longer take its own Dock tile.");
+  // osacompile ships a compiled asset catalog holding the stock AppleScript
+  // icon and points CFBundleIconName at it. macOS prefers that over the
+  // applet.icns we replace with Claude's icon, so the Dock tile stayed generic
+  // while Finder showed the right icon. Removing the catalog is what actually
+  // fixes a blank or wrong launcher icon.
+  if (stripAssetCatalog(appPath)) {
+    ok("Removed the stock icon catalog so the Claude icon is used.");
+  }
+
+  // ---- Undo the v0.1.22 LSUIElement experiment ---------------------------
+  //
+  // Marking the launcher as a background agent stopped macOS keeping it
+  // pinned in the Dock and relaunching it from that pin. Clearing it restores
+  // normal Dock behaviour.
+  if (isUiElement(appPath) === true) {
+    if (setUiElement(appPath, false)) {
+      ok("Launcher restored to a normal app, so it can stay pinned in the Dock.");
     }
   }
 

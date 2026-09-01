@@ -721,8 +721,14 @@ test("compileApp: rebuilding keeps the same bundle, so a Dock pin survives", asy
 
   d.compileApp({ name: "t", dataDir: "/data/one", appPath: app, claudeAppPath: "/Applications/Claude.app" });
   const first = fs.statSync(app).ino;
-  assert.equal(d.isUiElement(app), true, "launcher takes no Dock tile of its own");
   assert.equal(d.getBundleId(app), "com.claude-multiprofile.t");
+  // osacompile ships a stock asset catalog that macOS prefers over
+  // CFBundleIconFile, so the Claude icon we copy in would never reach the
+  // Dock. compileApp removes it; leaving it is what caused a blank tile.
+  assert.equal(d.hasAssetCatalog(app), false, "stock icon catalog removed");
+  // LSUIElement must NOT be set: marking the launcher a background agent
+  // stops macOS keeping it pinned in the Dock (the v0.1.22 regression).
+  assert.notEqual(d.isUiElement(app), true, "launcher stays a normal app");
 
   // Drop a marker inside the bundle: if the rebuild recreated it wholesale,
   // this disappears, which is exactly what breaks the pin.
@@ -781,7 +787,7 @@ test("ensureColoredClone accepts no colour, so every profile gets a bundle", asy
   );
 });
 
-test("setUiElement / isUiElement round-trip", async (t) => {
+test("setUiElement / isUiElement round-trip (used to undo the v0.1.22 flag)", async (t) => {
   if (process.platform !== "darwin") {
     t.skip("PlistBuddy is macOS only");
     return;
@@ -792,11 +798,12 @@ test("setUiElement / isUiElement round-trip", async (t) => {
   const app = path.join(root, "L.app");
   d.compileApp({ name: "u", dataDir: "/d", appPath: app, claudeAppPath: "/Applications/Claude.app" });
 
-  assert.equal(d.isUiElement(app), true);
-  assert.equal(d.setUiElement(app, false), true);
-  assert.equal(d.isUiElement(app), false, "an older launcher reads as visible");
+  // Kept so `repair` and `doctor --fix` can clear the flag on launchers built
+  // by v0.1.22, which set it and thereby broke Dock pinning.
   assert.equal(d.setUiElement(app, true), true);
   assert.equal(d.isUiElement(app), true);
+  assert.equal(d.setUiElement(app, false), true);
+  assert.equal(d.isUiElement(app), false);
 
   // Not a bundle at all: report rather than throw mid-health-check.
   assert.equal(d.isUiElement(path.join(root, "nope.app")), null);

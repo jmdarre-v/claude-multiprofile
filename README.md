@@ -91,13 +91,15 @@ Drag the **launcher** from `~/Applications` into the Dock. Do not drag the Claud
 
 That tile belongs to Claude itself rather than to the launcher, because the launcher spawns Claude and exits immediately. Pinning it pins the shared `/Applications/Claude.app`, so the next click opens your default account rather than the profile. It is the usual reason a profile icon appears to "stop working" and has to be re-pinned.
 
-Since v0.1.22 the launcher no longer takes a Dock tile of its own, so the only tile you see while a profile runs is its actual Claude window, and there is nothing ambiguous to drag. Rebuilding a launcher (through `rename`, `doctor --fix`, or linking a missing half) also preserves the bundle rather than replacing it, so an existing pin keeps working.
+Rebuilding a launcher (through `rename`, `doctor --fix`, or linking a missing half) preserves the bundle rather than replacing it, so an existing pin keeps working.
+
+v0.1.22 briefly marked launchers as background agents to hide a flicker. That stopped macOS keeping them pinned at all, and v0.1.24 reverted it.
 
 Since v0.1.23, clicking the icon again focuses the profile's existing window rather than opening a second copy. Each Desktop profile launches its own cloned copy of Claude.app, so `open` can address that profile specifically instead of forcing a new instance the way it must when profiles share one app.
 
 One thing that cannot be fixed: the running window is titled "Claude", not the profile name. That comes from `CFBundleName` inside the app, and editing it fails code signing and Gatekeeper. Give profiles different colours if you need to tell their windows apart.
 
-Launchers created before v0.1.22 still take a tile until they are updated. `claude-multiprofile doctor` reports them and `doctor --fix` or `repair` brings them up to date.
+If a launcher's Dock icon is blank, its `applet.icns` is being overridden by the stock icon catalog `osacompile` ships. `doctor` reports it and `doctor --fix` or `repair` removes the catalog so the Claude icon is used. The same commands backfill the per-profile copy that older profiles lack.
 
 ### Per-profile Dock colours
 

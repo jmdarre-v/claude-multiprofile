@@ -33,6 +33,8 @@ import {
   launcherGhConfigDir,
   setUiElement,
   isUiElement,
+  stripAssetCatalog,
+  hasAssetCatalog,
   compileApp,
   copyClaudeIcon,
   DEFAULT_APPLET_BUNDLE_ID,
@@ -445,20 +447,34 @@ function checkLauncherBundleIds(t, reg, fix) {
     }
     if (id !== DEFAULT_APPLET_BUNDLE_ID) {
       ok(`${p.name}: ${dim(id)}`);
+      // The stock asset catalog overrides the Claude icon we copy in, so the
+      // Dock shows a blank or generic tile while Finder shows the right one.
+      if (hasAssetCatalog(p.desktop.appPath)) {
+        if (fix) {
+          if (stripAssetCatalog(p.desktop.appPath)) {
+            refreshLauncher(p.desktop.appPath);
+            ok("  Repaired: launcher now uses the Claude icon in the Dock.");
+          }
+        } else {
+          info(`${p.name}: its Dock icon is being overridden by the stock AppleScript icon.`);
+          info(`  Repair with ${command("claude-multiprofile doctor --fix")}`);
+          t.warnings++;
+        }
+      }
       // Launchers built before v0.1.22 still take their own Dock tile, which
       // is what leads people to pin the shared Claude.app by mistake.
-      if (isUiElement(p.desktop.appPath) === false) {
+      if (isUiElement(p.desktop.appPath) === true) {
         if (fix) {
-          if (setUiElement(p.desktop.appPath, true)) {
+          if (setUiElement(p.desktop.appPath, false)) {
             // Editing Info.plist without touching the bundle leaves Finder and
             // the Dock showing whatever icon they cached, which reads as a
             // blank tile. `repair` has always done this; --fix did not, and
             // that is what made a repaired launcher look broken.
             refreshLauncher(p.desktop.appPath);
-            ok("  Repaired: launcher no longer takes its own Dock tile.");
+            ok("  Repaired: launcher can stay pinned in the Dock again.");
           }
         } else {
-          info(`${p.name}: its launcher still takes a Dock tile of its own.`);
+          info(`${p.name}: its launcher is marked as a background agent, so macOS will not keep it pinned.`);
           info(`  Repair with ${command("claude-multiprofile doctor --fix")}`);
           t.warnings++;
         }
@@ -592,11 +608,51 @@ function checkLauncherEnv(t, reg, fix) {
 
 function checkAppClones(t, reg, fix) {
   if (!isMac()) return;
-  const colored = reg.profiles.filter((p) => p.desktop && p.desktop.color);
-  if (colored.length === 0) return;
+  // Every Desktop profile wants its own clone now, not just coloured ones:
+  // it is what lets the launcher focus the profile's window instead of
+  // opening another copy on every click.
+  const desktop = reg.profiles.filter((p) => p.desktop && p.desktop.claudeAppPath);
+  if (desktop.length === 0) return;
 
-  step("Coloured Claude clones");
+  step("Per-profile Claude copies");
 
+  // Profiles created before v0.1.23 have no clone at all, so their launcher
+  // still targets the shared Claude.app and must use `open -n`.
+  for (const p of desktop.filter((x) => !fileExists(clonePathFor(x.name)))) {
+    warn(`${p.name}: has no dedicated copy of Claude.app.`);
+    info("  Clicking its Dock icon opens another window every time instead of");
+    info("  focusing the one already open.");
+    if (!fix) {
+      info(`  Repair with ${command("claude-multiprofile doctor --fix")}`);
+      t.warnings++;
+      continue;
+    }
+    try {
+      const clone = ensureColoredClone({
+        name: p.name,
+        claudeAppPath: p.desktop.claudeAppPath,
+        color: p.desktop.color || null,
+      });
+      // The launcher has to be rebuilt to point at the new copy and drop -n.
+      compileApp({
+        name: p.name,
+        dataDir: p.desktop.dataDir,
+        appPath: p.desktop.appPath,
+        claudeAppPath: clone,
+        codeConfigDir: p.code ? p.code.configDir : undefined,
+        ghConfigDir: p.code ? p.code.ghConfigDir || undefined : undefined,
+        dedicatedBundle: true,
+      });
+      copyClaudeIcon(p.desktop.appPath, p.desktop.claudeAppPath);
+      refreshLauncher(p.desktop.appPath);
+      ok(`  Repaired: ${p.name} now has its own copy, and its icon focuses instead of duplicating.`);
+    } catch (e) {
+      err(`  Could not build the copy: ${e.message}`);
+      t.problems++;
+    }
+  }
+
+  const colored = desktop.filter((p) => p.desktop.color && fileExists(clonePathFor(p.name)));
   for (const p of colored) {
     const clone = clonePathFor(p.name);
     if (!fileExists(clone)) {
