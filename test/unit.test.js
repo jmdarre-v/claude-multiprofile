@@ -928,3 +928,78 @@ test("buildLaunchAppleScript: an empty code config dir is treated as absent", ()
   assert.ok(!buildLaunchAppleScript(DIR, APP, "").includes("--env"));
   assert.ok(!buildLaunchAppleScript(DIR, APP, undefined).includes("--env"));
 });
+
+// ---------------------------------------------------------------------------
+// doctor.js - detecting a Claude copy started outside its launcher
+// ---------------------------------------------------------------------------
+
+const COPY = "/Users/x/Library/Application Support/claude-multiprofile/apps/Claude work.app";
+
+test("parseRunningCopies: finds a copy started without --user-data-dir", async () => {
+  const { parseRunningCopies } = await import("../src/commands/doctor.js");
+
+  // This is the silent failure: the copy is running, but with no profile
+  // argument it falls back to the shared default data dir.
+  const ps = [
+    `  501 ${COPY}/Contents/MacOS/Claude`,
+    "  502 /Applications/Firefox.app/Contents/MacOS/firefox",
+  ].join("\n");
+
+  const found = parseRunningCopies(ps, COPY);
+  assert.equal(found.length, 1);
+  assert.equal(found[0].pid, "501");
+  assert.ok(!found[0].command.includes("--user-data-dir="));
+});
+
+test("parseRunningCopies: keeps the argument so a healthy launch can be told apart", async () => {
+  const { parseRunningCopies } = await import("../src/commands/doctor.js");
+
+  const ps = `  501 ${COPY}/Contents/MacOS/Claude --user-data-dir=/Users/x/Library/Application Support/Claude-WORK`;
+  const found = parseRunningCopies(ps, COPY);
+
+  assert.equal(found.length, 1);
+  assert.ok(found[0].command.includes("--user-data-dir="));
+});
+
+test("parseRunningCopies: ignores helper processes", async () => {
+  const { parseRunningCopies } = await import("../src/commands/doctor.js");
+
+  // Helpers inherit the parent's profile and never carry the argument
+  // themselves, so counting them would report a false failure.
+  const ps = [
+    `  503 ${COPY}/Contents/Frameworks/Claude Helper (Renderer).app/Contents/MacOS/Claude Helper (Renderer)`,
+    `  504 ${COPY}/Contents/Frameworks/Claude Helper (GPU).app/Contents/MacOS/Claude Helper (GPU)`,
+  ].join("\n");
+
+  assert.deepEqual(parseRunningCopies(ps, COPY), []);
+});
+
+test("parseRunningCopies: does not match a different profile's copy", async () => {
+  const { parseRunningCopies } = await import("../src/commands/doctor.js");
+
+  const other = COPY.replace("Claude work.app", "Claude personal.app");
+  assert.deepEqual(parseRunningCopies(`  501 ${other}/Contents/MacOS/Claude`, COPY), []);
+});
+
+test("parseDockPaths: decodes tile URLs and drops the trailing slash", async () => {
+  const { parseDockPaths } = await import("../src/commands/doctor.js");
+
+  // Dock tiles are percent-encoded file URLs with a trailing slash; profile
+  // copies always contain a space, so decoding is what makes them comparable.
+  const plist = `
+    { "_CFURLString" = "file:///Applications/Claude.app/"; }
+    { "_CFURLString" = "file:///Users/x/Library/Application%20Support/claude-multiprofile/apps/Claude%20work.app/"; }
+  `;
+
+  assert.deepEqual(parseDockPaths(plist), [
+    "/Applications/Claude.app",
+    "/Users/x/Library/Application Support/claude-multiprofile/apps/Claude work.app",
+  ]);
+});
+
+test("parseDockPaths: skips tiles that are not file URLs", async () => {
+  const { parseDockPaths } = await import("../src/commands/doctor.js");
+
+  const plist = `{ "_CFURLString" = "x-apple-taskbar:custom"; } { "_CFURLString" = "file:///Applications/Claude.app/"; }`;
+  assert.deepEqual(parseDockPaths(plist), ["/Applications/Claude.app"]);
+});
