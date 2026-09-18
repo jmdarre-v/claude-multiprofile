@@ -11,6 +11,21 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+// Some tests deliberately drive refusal paths (a corrupt settings.json, a
+// symlink pointing out of the profile), and those paths warn on purpose:
+// the warning is the user-facing half of the behaviour being asserted. In a
+// test report the warnings read as failures, which is actively misleading
+// during `npm publish`. Swallow the output, keep the assertions.
+function quietly(fn) {
+  const real = console.log;
+  console.log = () => {};
+  try {
+    return fn();
+  } finally {
+    console.log = real;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // util.js - sanitization and path helpers
 // ---------------------------------------------------------------------------
@@ -331,7 +346,7 @@ test("resyncDenyRules: never overwrites a malformed settings.json", () => {
   const broken = `{ "model": "opus", }`;
   fs.writeFileSync(settingsPathFor(a.code.configDir), broken, "utf8");
 
-  const results = resyncDenyRules({ profiles: [a, b] });
+  const results = quietly(() => resyncDenyRules({ profiles: [a, b] }));
 
   const after = fs.readFileSync(settingsPathFor(a.code.configDir), "utf8");
   assert.equal(after, broken, "malformed file must be byte-identical");
@@ -360,7 +375,7 @@ test("resyncDenyRules: refuses to write through a settings.json symlink", async 
   fs.writeFileSync(shared, JSON.stringify({ model: "opus" }), "utf8");
   fs.symlinkSync(shared, settingsPathFor(a.code.configDir));
 
-  const results = resyncDenyRules({ profiles: [a, b] });
+  const results = quietly(() => resyncDenyRules({ profiles: [a, b] }));
 
   assert.deepEqual(
     JSON.parse(fs.readFileSync(shared, "utf8")),
@@ -378,7 +393,7 @@ test("resyncDenyRules: refuses to write through a settings.json symlink", async 
   );
 
   // stripManagedDenyRules honours the same boundary.
-  assert.equal(stripManagedDenyRules(a), false);
+  assert.equal(quietly(() => stripManagedDenyRules(a)), false);
   assert.deepEqual(JSON.parse(fs.readFileSync(shared, "utf8")), { model: "opus" });
 
   fs.rmSync(root, { recursive: true, force: true });
