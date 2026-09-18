@@ -366,7 +366,7 @@ The pitch for this tool over the others: it's the only one that handles Claude D
 
 Profiles are isolated by **configuration**: each one points Claude at a different config/data directory (`CLAUDE_CONFIG_DIR` for Code, `--user-data-dir` for Desktop). That fully separates identity and storage: separate logins, chats, settings, and MCP connectors.
 
-What it does **not** do on its own is restrict what a running profile can *reach* on disk. A broad filesystem search from `$HOME` could surface a sibling profile's `CLAUDE.md`, skills, or MCP config, and pull the wrong context into the conversation.
+What it does **not** do on its own is restrict what a running profile can *reach* on disk. A broad filesystem search from `$HOME` could surface a sibling profile's `CLAUDE.md`, skills, or MCP config, and pull the wrong context into the conversation. The design isolates identity and storage, but not discovery, a framing owed to @miketaus in [issue #4](https://github.com/jmdarre-v/claude-multiprofile/issues/4).
 
 Since v0.1.10, Code profiles get an enforceable guard. Every profile's `settings.json` receives `permissions.deny` rules blocking reads of every *other* profile's directories:
 
