@@ -33,6 +33,24 @@ project is pre-1.0, so minor breakage may occur between 0.x releases.
   anyone can re-source. Sending someone to fix a file that was already fine
   is worse than saying nothing.
 
+### Fixed
+
+- Adding a second fish profile no longer drops the first one's function.
+
+  Fish cannot express an env-prefixed alias, so the tool writes a function
+  for it instead. The reader that returns the current contents of the managed
+  block matched only lines beginning with `alias `, which made every fish
+  entry invisible to it. Since `add` and `remove` rebuild the whole block
+  from what that reader returns, the existing fish profiles were not carried
+  across: adding a second one wrote a block containing only the second.
+
+  The same blind spot made `status` report a fish profile's alias as missing
+  when it was present and correct.
+
+  Found while adding the timestamp above, which needs to compare the aliases
+  already in the block against the ones about to be written. zsh and bash
+  were never affected.
+
 ## 0.1.26 (2026-09-18)
 
 ### Added

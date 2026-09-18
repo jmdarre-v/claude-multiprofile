@@ -106,6 +106,20 @@ function extractBlock(content) {
 
 // ---- Public API ----------------------------------------------------------
 
+export function parseManagedLine(line) {
+  // Returns the name this line defines, or null if it defines nothing.
+  //
+  // Fish cannot express an env-prefixed alias, so buildAliasLine emits a
+  // function for it. Matching only `alias ` therefore made every fish entry
+  // invisible to this reader, and since addAlias and removeAlias rebuild the
+  // block from whatever it returns, adding a second fish profile silently
+  // dropped the first one's function.
+  const trimmed = String(line).trim();
+  const m =
+    trimmed.match(/^alias\s+([^\s=]+)=/) || trimmed.match(/^function\s+([^\s;]+)\s*;/);
+  return m ? m[1] : null;
+}
+
 export function readManagedAliases(shell) {
   // Returns an array of { name, line } entries currently inside our block.
   const rcPath = rcPathForShell(shell);
@@ -114,12 +128,7 @@ export function readManagedAliases(shell) {
   if (!hasBlock) return [];
   return inside
     .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l.startsWith("alias "))
-    .map((line) => {
-      const m = line.match(/^alias\s+([^\s=]+)=/);
-      return { name: m ? m[1] : null, line };
-    })
+    .map((l) => ({ name: parseManagedLine(l), line: l.trim() }))
     .filter((e) => e.name);
 }
 

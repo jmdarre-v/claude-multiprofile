@@ -1180,3 +1180,23 @@ test("reportStaleSession: warns only when the terminal predates the aliases", as
   assert.equal(capture(null, changed), "");
   assert.equal(capture({ pid: 1, startedAt: opened }, null), "");
 });
+
+test("parseManagedLine: reads fish functions as well as zsh aliases", async () => {
+  const { parseManagedLine, buildAliasLine } = await import("../src/shell.js");
+
+  assert.equal(parseManagedLine(`alias claude-work='CLAUDE_CONFIG_DIR="/c" claude'`), "claude-work");
+
+  // Fish cannot express an env-prefixed alias, so buildAliasLine emits a
+  // function. Matching only `alias ` made every fish entry invisible here,
+  // and because addAlias rebuilds the block from what this returns, adding a
+  // second fish profile silently dropped the first one's function.
+  const fish = buildAliasLine("fish", "claude-work", "/c");
+  assert.equal(parseManagedLine(fish), "claude-work");
+  assert.equal(parseManagedLine(buildAliasLine("fish", "claude-a", "/a", "/a/gh")), "claude-a");
+
+  // Comments and blanks inside the block define nothing.
+  assert.equal(parseManagedLine("# Managed by claude-multiprofile."), null);
+  assert.equal(parseManagedLine("# updated 2026-09-18T20:00:00.000Z"), null);
+  assert.equal(parseManagedLine(""), null);
+  assert.equal(parseManagedLine("   "), null);
+});
