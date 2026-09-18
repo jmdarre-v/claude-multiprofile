@@ -3,6 +3,44 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## 0.1.26 (2026-09-18)
+
+### Added
+
+- `doctor` reports a Claude copy that was started without going through its
+  launcher. Contributed by Jake Barnby (@abnegate) in #6.
+
+  Desktop isolation lives in the launch command, not in the copy. The launcher
+  runs `open -a <copy> --args --user-data-dir=<profile>`, and the copy itself
+  holds no profile, so anything that starts it another way falls back to the
+  shared default profile and opens whichever account is signed in there.
+  Nothing about the window looks wrong. It is simply the wrong account.
+
+  v0.1.23 made this harder to notice rather than easier. When every profile
+  shared one `Claude.app`, a tile pinned from the running window was visibly
+  the stock icon. Now that tile is the profile's own coloured copy, so it looks
+  exactly like a correctly pinned launcher. Spotlight, a Login Item, and Claude
+  relaunching itself after an update all reach the copy the same way.
+
+  `doctor` now reports any profile copy running without `--user-data-dir`, with
+  its pid, and flags a copy pinned to the Dock as the usual cause. Read only:
+  the repair is a Dock edit, which does not belong in an automated path.
+
+  This is the second cause of the same symptom, alongside the account collision
+  check added in 0.1.25. Neither check sees the other's case.
+
+### Fixed
+
+- `parseRunningCopies` no longer skips a profile whose name contains "Helper".
+
+  Helper processes were excluded twice, once by the `/Contents/MacOS/` path
+  needle and again by matching the word "Helper" in the command line. Helpers
+  live under `Contents/Frameworks`, so the needle already excluded them and the
+  second filter only ever matched profile names. A profile called "Helper" was
+  dropped from the check entirely, meaning `doctor` would report that every
+  copy was started through its launcher while that one sat on the shared
+  default account. That silence is the exact failure the check exists to break.
+
 ## 0.1.25 (2026-09-18)
 
 ### Added

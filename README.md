@@ -89,7 +89,11 @@ Launchers built before v0.1.12 keep their old launch line. Run `claude-multiprof
 
 Drag the **launcher** from `~/Applications` into the Dock. Do not drag the Claude window's tile down while the profile is running.
 
-That tile belongs to Claude itself rather than to the launcher, because the launcher spawns Claude and exits immediately. Pinning it pins the shared `/Applications/Claude.app`, so the next click opens your default account rather than the profile. It is the usual reason a profile icon appears to "stop working" and has to be re-pinned.
+That tile belongs to Claude itself rather than to the launcher, because the launcher spawns Claude and exits immediately. Pinning it pins the profile's own copy of Claude.app, and that copy holds no profile of its own: `--user-data-dir` is supplied by the launcher at spawn time, so a click that starts the copy directly opens the shared default profile and whichever account is signed in there. It is the usual reason a profile icon appears to "stop working" and has to be re-pinned.
+
+Before v0.1.23 every profile shared `/Applications/Claude.app`, so the tile you pinned was visibly the stock app. Now it is the profile's own copy, carrying the profile's colour and name, which makes a wrongly pinned tile much harder to spot. It looks exactly like the launcher until you notice the account is wrong.
+
+Spotlight, a Login Item, and Claude relaunching itself after an update all start the copy the same way, with the same result. `doctor` reports a copy that is running without `--user-data-dir`, and flags a copy that is pinned to the Dock.
 
 Rebuilding a launcher (through `rename`, `doctor --fix`, or linking a missing half) preserves the bundle rather than replacing it, so an existing pin keeps working.
 
@@ -178,7 +182,8 @@ It checks:
 - **Directory collisions.** A profile pointing at another tool's data folder (`~/.claude-mem`, `~/.claude-profiles`), or two profiles sharing one directory.
 - **Launcher bundle IDs.** Launchers created before v0.1.9 still carry the default AppleScript bundle identifier; with two or more of them, macOS confuses the launchers and Dock double-clicks stop working.
 - **Launchers that don't export `CLAUDE_CONFIG_DIR`.** Launchers created before v0.1.12 let Claude Code sessions started from inside Desktop fall back to the shared `~/.claude`. `doctor` reads the launcher's compiled script to find them, and `--fix` rebuilds them in place.
-- **Two profiles signed in as the same account.** Isolation can fail in a way no path check sees: signing in uses a `claude://` deep link, and with two Claude windows open the callback can reach the wrong instance, putting the token in the wrong data folder. The profile then opens the right folder while authenticated as the wrong account. Comparing the recorded account across profiles is the only visible signal, and `doctor` now does it. Recovery is manual: quit every Claude window, open only the affected profile, sign out, and sign back in with nothing else running.
+- **How Desktop is actually being started.** A profile's copy of Claude.app is isolated by the `--user-data-dir` the launcher passes it, so a copy started any other way (a Dock tile pinned from the running window, Spotlight, a Login Item, Claude relaunching itself after an update) runs on the shared default profile instead. Nothing looks wrong; it is just the wrong account. `doctor` reports any copy running without the argument, and flags a copy pinned to the Dock, which is the usual cause.
+- **Two profiles signed in as the same account.** The same wrong-account symptom from a different cause. Signing in uses a `claude://` deep link, and with two Claude windows open the callback can reach the wrong instance, putting the token in the wrong data folder. The profile then opens the right folder while authenticated as the wrong account. Comparing the recorded account across profiles is the only visible signal, and `doctor` now does it. Recovery is manual: quit every Claude window, open only the affected profile, sign out, and sign back in with nothing else running.
 - **A corrupt registry file.** A registry that exists but isn't valid JSON otherwise masquerades as "no profiles configured". Mutating commands refuse to run until it's fixed, and every write keeps a `.bak` of the last good version next to it.
 - **Cross-profile read protection** drift (see [Profile isolation](#profile-isolation) below).
 

@@ -38,6 +38,7 @@ import {
   hasAssetCatalog,
   compileApp,
   copyClaudeIcon,
+  findClaudeApp,
   DEFAULT_APPLET_BUNDLE_ID,
 } from "../desktop.js";
 import { DEFAULT_CLAUDE_CONFIG_DIR, ghTokenOverride } from "../code.js";
@@ -760,6 +761,133 @@ function checkAppClones(t, reg, fix) {
   }
 }
 
+// ---- Check: how the Desktop app is actually being started -------------------
+//
+// Desktop isolation lives in the launch COMMAND, not in the app: the launcher
+// runs `open -a <copy> --args --user-data-dir=<profile>`. The copy carries no
+// profile of its own, so anything that starts it WITHOUT that argument falls
+// back to the shared default profile and quietly opens whichever account is
+// signed in there.
+//
+// That is easy to trigger by accident, because launching a profile puts the
+// COPY's icon in the Dock, and "Keep in Dock" pins the copy rather than the
+// launcher. Every later click then bypasses the launcher. Spotlight, a Login
+// Item, and the app relaunching itself after an update do the same thing.
+//
+// Nothing about the window looks wrong when this happens - it is simply the
+// wrong account - so check the failure itself (a copy running with no
+// --user-data-dir) and its usual cause (a copy pinned to the Dock).
+
+export function parseRunningCopies(psOutput, copyPath) {
+  const needle = path.join(copyPath, "Contents", "MacOS") + path.sep;
+  const found = [];
+  for (const line of psOutput.split("\n")) {
+    // Renderer/GPU helpers live in their own nested bundles under
+    // Contents/Frameworks, never Contents/MacOS, so the needle already excludes
+    // them. Matching on the word "Helper" as well would look like belt and
+    // braces but would skip a profile actually named "Helper", and a profile
+    // this check stays silent about is the exact failure it exists to catch.
+    if (!line.includes(needle)) continue;
+    const match = line.trim().match(/^(\d+)\s+(.*)$/);
+    if (match) found.push({ pid: match[1], command: match[2] });
+  }
+  return found;
+}
+
+function runningCopies(copyPath) {
+  try {
+    return parseRunningCopies(
+      execFileSync("ps", ["-axo", "pid=,command="], {
+        encoding: "utf8",
+        maxBuffer: 8 * 1024 * 1024,
+      }),
+      copyPath
+    );
+  } catch {
+    return [];
+  }
+}
+
+// The Dock's plist holds binary icon blobs, so `plutil -convert json` refuses
+// the whole thing. Pull the tile URLs out of the textual plist instead.
+export function parseDockPaths(plistText) {
+  const paths = [];
+  const pattern = /"_CFURLString"\s*=\s*"([^"]*)"/g;
+  let match;
+  while ((match = pattern.exec(plistText)) !== null) {
+    const url = match[1];
+    if (!url.startsWith("file://")) continue;
+    try {
+      paths.push(decodeURIComponent(url.slice("file://".length)).replace(/\/+$/, ""));
+    } catch {
+      // A tile with an undecodable URL tells us nothing; skip it.
+    }
+  }
+  return paths;
+}
+
+function dockPinnedPaths() {
+  try {
+    return parseDockPaths(
+      execFileSync("defaults", ["read", "com.apple.dock", "persistent-apps"], {
+        encoding: "utf8",
+        maxBuffer: 8 * 1024 * 1024,
+      })
+    );
+  } catch {
+    return null;
+  }
+}
+
+function checkDesktopLaunchPath(t, reg) {
+  if (!isMac()) return;
+  const withCopies = reg.profiles.filter(
+    (p) => p.desktop && p.desktop.appPath && fileExists(clonePathFor(p.name))
+  );
+  if (withCopies.length === 0) return;
+
+  step("Desktop launch path");
+
+  const pinned = dockPinnedPaths();
+  let flagged = false;
+
+  for (const p of withCopies) {
+    const copyPath = clonePathFor(p.name);
+
+    for (const proc of runningCopies(copyPath)) {
+      if (proc.command.includes("--user-data-dir=")) continue;
+      flagged = true;
+      err(`${p.name}: running without --user-data-dir (pid ${proc.pid}).`);
+      info(`  It is on the shared default profile, not ${pathStr(tildify(p.desktop.dataDir))},`);
+      info("  so it shows whichever account that one is signed in to.");
+      info(`  Quit it and reopen from ${pathStr(tildify(p.desktop.appPath))}.`);
+      t.problems++;
+    }
+
+    if (pinned && pinned.includes(copyPath.replace(/\/+$/, ""))) {
+      flagged = true;
+      warn(`${p.name}: its Claude copy is pinned to the Dock instead of its launcher.`);
+      info("  Clicking that tile starts the copy directly, skipping the launcher,");
+      info("  which is what drops --user-data-dir and opens the default profile.");
+      info(`  Remove that tile and pin ${pathStr(tildify(p.desktop.appPath))} instead.`);
+      t.warnings++;
+    }
+  }
+
+  if (pinned === null) {
+    info("Could not read the Dock configuration; skipped the pinned-tile check.");
+  } else {
+    const stock = findClaudeApp();
+    if (stock && pinned.includes(stock)) {
+      info(`${tildify(stock)} is pinned to the Dock.`);
+      info("  That is the unprofiled Claude: it always opens the shared default");
+      info("  profile, never one of the profiles above.");
+    }
+  }
+
+  if (!flagged) ok("Every running Claude copy was started through its launcher.");
+}
+
 // ---- Check: per-profile GitHub CLI isolation --------------------------------
 //
 // Two things can silently defeat it:
@@ -916,6 +1044,7 @@ export async function doctor(args = []) {
   checkLauncherEnv(t, reg, fix);
   checkAccountCollisions(t, reg);
   checkAppClones(t, reg, fix);
+  checkDesktopLaunchPath(t, reg);
   checkGhIsolation(t, reg, fix);
   checkDenyRules(t, reg, fix);
 
