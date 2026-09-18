@@ -3,6 +3,32 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## 0.1.25 (2026-09-18)
+
+### Added
+
+- `doctor` reports when two profiles are signed in as the same account.
+
+  Reported after a Claude Desktop update: two profiles both opened the same
+  account, and `doctor` said "No problems found". It was right about
+  everything it checked. The data directories were separate, the launchers
+  worked, LaunchServices resolved correctly, and no path was wrong. What had
+  happened is that a `claude://` sign-in callback was routed to the wrong
+  running instance, so the token landed in the wrong data folder. A profile
+  can open exactly the right folder while authenticated as somebody else, and
+  nothing about the filesystem shows it.
+
+  The one visible signal is that two data directories record the same
+  `lastKnownAccountUuid`, which is never legitimate, since being a different
+  account is the entire point of a profile. `doctor` now compares them across
+  the default install and every Desktop profile, and reports a collision as a
+  problem with the steps to undo it.
+
+  Not auto-fixable: recovering means signing out and back in with only one
+  Claude running, which is yours to do. A Claude update that forces
+  re-authentication is the usual trigger, because every profile gets prompted
+  at once.
+
 ## 0.1.24 (2026-09-01)
 
 Three fixes for one long-standing complaint: a profile's Dock icon that

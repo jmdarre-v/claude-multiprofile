@@ -189,6 +189,34 @@ function appleScriptString(s) {
 // at this path, ships with the OS.
 const PLIST_BUDDY = "/usr/libexec/PlistBuddy";
 
+// Which Claude account a Desktop data directory is currently signed in as.
+//
+// Claude Desktop records this in config.json at the top level. We read it for
+// one reason: two profiles must never be the same account. If they are, the
+// isolation has failed in the way that actually matters to a user, even though
+// every path, launcher, and data directory still checks out.
+//
+// How that happens: signing in uses a `claude://` deep link, and macOS routes
+// it to whichever Claude instance answers first. With two instances running,
+// the token can land in the wrong data directory. A Claude update that forces
+// re-authentication is a common trigger, because both profiles get prompted at
+// once. The result is a profile that opens the correct folder while
+// authenticated as somebody else.
+//
+// Returns null when the profile has never been signed in, or the file is
+// missing or unreadable, all of which are ordinary states rather than errors.
+export function desktopAccountUuid(dataDir) {
+  const cfg = path.join(dataDir, "config.json");
+  if (!fileExists(cfg)) return null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(cfg, "utf8"));
+    const id = parsed && parsed.lastKnownAccountUuid;
+    return typeof id === "string" && id ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 // ---- Reading back an existing launcher -------------------------------------
 //
 // A launcher built before v0.1.12 has no `--env CLAUDE_CONFIG_DIR=...` in its

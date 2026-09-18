@@ -178,6 +178,7 @@ It checks:
 - **Directory collisions.** A profile pointing at another tool's data folder (`~/.claude-mem`, `~/.claude-profiles`), or two profiles sharing one directory.
 - **Launcher bundle IDs.** Launchers created before v0.1.9 still carry the default AppleScript bundle identifier; with two or more of them, macOS confuses the launchers and Dock double-clicks stop working.
 - **Launchers that don't export `CLAUDE_CONFIG_DIR`.** Launchers created before v0.1.12 let Claude Code sessions started from inside Desktop fall back to the shared `~/.claude`. `doctor` reads the launcher's compiled script to find them, and `--fix` rebuilds them in place.
+- **Two profiles signed in as the same account.** Isolation can fail in a way no path check sees: signing in uses a `claude://` deep link, and with two Claude windows open the callback can reach the wrong instance, putting the token in the wrong data folder. The profile then opens the right folder while authenticated as the wrong account. Comparing the recorded account across profiles is the only visible signal, and `doctor` now does it. Recovery is manual: quit every Claude window, open only the affected profile, sign out, and sign back in with nothing else running.
 - **A corrupt registry file.** A registry that exists but isn't valid JSON otherwise masquerades as "no profiles configured". Mutating commands refuse to run until it's fixed, and every write keeps a `.bak` of the last good version next to it.
 - **Cross-profile read protection** drift (see [Profile isolation](#profile-isolation) below).
 

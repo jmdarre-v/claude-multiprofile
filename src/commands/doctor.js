@@ -33,6 +33,7 @@ import {
   launcherGhConfigDir,
   setUiElement,
   isUiElement,
+  desktopAccountUuid,
   stripAssetCatalog,
   hasAssetCatalog,
   compileApp,
@@ -600,6 +601,78 @@ function checkLauncherEnv(t, reg, fix) {
   }
 }
 
+// ---- Check: two profiles signed in as the same account ----------------------
+//
+// The failure this exists for, reported 2026-09-18: after a Claude Desktop
+// update, both the default install and a profile opened as the same account.
+// Everything structural was correct. The launchers worked, the data
+// directories were separate, LaunchServices resolved properly, and `doctor`
+// reported no problems. What had actually happened is that a `claude://`
+// sign-in deep link was routed to the wrong running instance, so the token
+// landed in the wrong data directory.
+//
+// No path check can see this, because no path is wrong. The only visible
+// signal is that two data directories record the same account, which is never
+// legitimate: the entire point of a profile is to be a different account.
+//
+// Not auto-fixable. Undoing it means signing out and back in, with only one
+// Claude running, which is the user's to do.
+
+function checkAccountCollisions(t, reg) {
+  const defaults = detectDefaults();
+  const seats = [];
+  if (defaults.desktop) {
+    seats.push({ label: "default", dataDir: defaults.desktop.dataDir });
+  }
+  for (const p of reg.profiles) {
+    if (p.desktop && p.desktop.dataDir) {
+      seats.push({ label: p.name, dataDir: p.desktop.dataDir });
+    }
+  }
+  if (seats.length < 2) return;
+
+  step("Signed-in accounts");
+
+  const byAccount = new Map();
+  let anySignedIn = false;
+  for (const s of seats) {
+    const id = desktopAccountUuid(s.dataDir);
+    if (!id) {
+      info(`${s.label}: not signed in yet.`);
+      continue;
+    }
+    anySignedIn = true;
+    // Show a short prefix rather than the whole identifier: enough to compare
+    // two entries by eye, without printing an account ID in full.
+    info(`${s.label}: account ${dim(id.slice(0, 8))}`);
+    if (!byAccount.has(id)) byAccount.set(id, []);
+    byAccount.get(id).push(s.label);
+  }
+  if (!anySignedIn) return;
+
+  const collisions = [...byAccount.values()].filter((names) => names.length > 1);
+  if (collisions.length === 0) {
+    ok("Every profile is a different account.");
+    return;
+  }
+
+  for (const names of collisions) {
+    console.log("");
+    err(`${names.join(" and ")} are signed in as the SAME account.`);
+    info("  These are supposed to be different accounts, so one of them holds a");
+    info("  token that belongs to the other.");
+    info("  This happens when a sign-in runs while two Claude windows are open:");
+    info("  the claude:// callback goes to whichever instance answers first, and");
+    info("  the token lands in the wrong data folder. A Claude update that forces");
+    info("  re-authentication is the usual trigger.");
+    info("  To fix, in the profile that shows the wrong account:");
+    info("    1. Quit every Claude window (Cmd+Q), leaving none running.");
+    info("    2. Open only that profile and sign out.");
+    info("    3. Sign back in with the account it should be, still with nothing else open.");
+    t.problems++;
+  }
+}
+
 // ---- Check: coloured Claude clones ------------------------------------------
 //
 // A profile with a colour launches its own clone of Claude.app. Claude updates
@@ -841,6 +914,7 @@ export async function doctor(args = []) {
   checkProfiles(t, reg);
   checkLauncherBundleIds(t, reg, fix);
   checkLauncherEnv(t, reg, fix);
+  checkAccountCollisions(t, reg);
   checkAppClones(t, reg, fix);
   checkGhIsolation(t, reg, fix);
   checkDenyRules(t, reg, fix);

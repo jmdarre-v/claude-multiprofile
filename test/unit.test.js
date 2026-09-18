@@ -811,6 +811,45 @@ test("setUiElement / isUiElement round-trip (used to undo the v0.1.22 flag)", as
 });
 
 // ---------------------------------------------------------------------------
+// desktop.js - which account a Desktop profile is signed in as
+// ---------------------------------------------------------------------------
+//
+// Reported 2026-09-18: after a Claude Desktop update, two profiles opened as
+// the SAME account. Every structural check passed (separate data dirs, working
+// launchers, correct LaunchServices resolution) because nothing structural was
+// wrong: a claude:// sign-in callback had been routed to the wrong running
+// instance, putting the token in the wrong data folder. The only visible
+// signal is two data directories recording the same account.
+
+test("desktopAccountUuid: reads the account, and treats absent state as null", async (t) => {
+  const d = await import("../src/desktop.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-acct-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const mk = (name, body) => {
+    const dir = path.join(root, name);
+    fs.mkdirSync(dir, { recursive: true });
+    if (body !== undefined) fs.writeFileSync(path.join(dir, "config.json"), body, "utf8");
+    return dir;
+  };
+
+  const signedIn = mk("a", JSON.stringify({ lastKnownAccountUuid: "uuid-1", darkMode: true }));
+  assert.equal(d.desktopAccountUuid(signedIn), "uuid-1");
+
+  // The collision the check exists to catch: two dirs, one account.
+  const other = mk("b", JSON.stringify({ lastKnownAccountUuid: "uuid-1" }));
+  assert.equal(d.desktopAccountUuid(other), d.desktopAccountUuid(signedIn));
+
+  // Ordinary states that must not be reported as faults.
+  assert.equal(d.desktopAccountUuid(mk("never", JSON.stringify({ darkMode: true }))), null);
+  assert.equal(d.desktopAccountUuid(mk("nofile")), null, "no config.json yet");
+  assert.equal(d.desktopAccountUuid(mk("broken", "{ not json")), null);
+  assert.equal(d.desktopAccountUuid(path.join(root, "missing")), null);
+  // An empty string is not an account.
+  assert.equal(d.desktopAccountUuid(mk("empty", JSON.stringify({ lastKnownAccountUuid: "" }))), null);
+});
+
+// ---------------------------------------------------------------------------
 // appclone.js - per-profile coloured Claude clones (issue #2)
 // ---------------------------------------------------------------------------
 
