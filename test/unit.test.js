@@ -244,6 +244,27 @@ test("writeAliases creates a managed block when none exists, and replaces it on 
   const endMatches = content.match(/# <<< claude-multiprofile <<</g) || [];
   assert.equal(startMatches.length, 1);
   assert.equal(endMatches.length, 1);
+
+  // The block records when it last changed, which is what lets `status` tell
+  // a terminal older than the aliases from one that is up to date.
+  const { readAliasStamp } = await import("../src/shell.js");
+  const afterChange = readAliasStamp("zsh");
+  assert.ok(Number.isFinite(afterChange), "a changed block carries a stamp");
+
+  // Rewriting the same aliases must not move the stamp. A fresh timestamp
+  // there would claim a change that did not happen, and `status` would send
+  // people to re-source a file that was already loaded.
+  writeAliases("zsh", [
+    `alias claude-a='CLAUDE_CONFIG_DIR="$HOME/.claude-a" claude'`,
+    `alias claude-b='CLAUDE_CONFIG_DIR="$HOME/.claude-b" claude'`,
+  ]);
+  assert.equal(readAliasStamp("zsh"), afterChange, "a no-op write keeps the stamp");
+
+  // A real change moves it forward.
+  writeAliases("zsh", [
+    `alias claude-a='CLAUDE_CONFIG_DIR="$HOME/.claude-a" claude'`,
+  ]);
+  assert.ok(readAliasStamp("zsh") >= afterChange, "a changed block re-stamps");
 });
 
 // ---------------------------------------------------------------------------
@@ -1071,4 +1092,91 @@ test("parseRunningCopies: still reports a profile whose own name contains 'Helpe
   assert.equal(found.length, 1);
   assert.equal(found[0].pid, "501");
   assert.ok(!found[0].command.includes("--user-data-dir="));
+});
+
+// ---------------------------------------------------------------------------
+// shell.js - is this terminal running the aliases that are on disk?
+// ---------------------------------------------------------------------------
+
+test("isSessionShell: recognises a session, ignores a one-shot command shell", async () => {
+  const { isSessionShell } = await import("../src/shell.js");
+
+  // Terminal.app starts a login shell, which ps shows with a leading dash.
+  assert.equal(isSessionShell("-zsh"), true);
+  assert.equal(isSessionShell("/bin/zsh"), true);
+  assert.equal(isSessionShell("/opt/homebrew/bin/fish"), true);
+
+  // `zsh -c ...` runs one command and exits, so it holds no alias state the
+  // user could act on. It is also how scripts invoke this tool, and warning
+  // about a shell that lived for milliseconds would be noise.
+  assert.equal(isSessionShell("/bin/zsh -c 'claude-multiprofile status'"), false);
+
+  assert.equal(isSessionShell("/Applications/Claude.app/Contents/MacOS/Claude"), false);
+  assert.equal(isSessionShell("node /usr/local/bin/claude-multiprofile"), false);
+  assert.equal(isSessionShell(""), false);
+});
+
+test("parsePsRecord: pulls the start time out from between ppid and command", async () => {
+  const { parsePsRecord } = await import("../src/shell.js");
+
+  // lstart contains spaces, so the date has to be matched by shape rather
+  // than by splitting on whitespace.
+  const rec = parsePsRecord("66716 Fri Sep 18 20:13:15 2026     /bin/zsh -i");
+  assert.equal(rec.ppid, 66716);
+  assert.equal(rec.command, "/bin/zsh -i");
+  assert.equal(new Date(rec.startedAt).getFullYear(), 2026);
+
+  // ps space-pads single-digit days.
+  assert.ok(parsePsRecord("1 Mon Sep  8 09:04:01 2026 -zsh"));
+
+  assert.equal(parsePsRecord("not a ps line"), null);
+  assert.equal(parsePsRecord(""), null);
+});
+
+test("aliasSessionState: only reports stale when both times are known", async () => {
+  const { aliasSessionState } = await import("../src/shell.js");
+
+  const opened = Date.parse("2026-09-18T19:00:00Z");
+  const changed = Date.parse("2026-09-18T20:00:00Z");
+
+  assert.equal(aliasSessionState(opened, changed), "stale");
+  assert.equal(aliasSessionState(changed, opened), "current");
+
+  // A missing half must never produce a warning. Sending someone to
+  // re-source a file that was already fine is worse than staying quiet,
+  // and an rc block written before stamping existed has no timestamp.
+  assert.equal(aliasSessionState(null, changed), "unknown");
+  assert.equal(aliasSessionState(opened, null), "unknown");
+  assert.equal(aliasSessionState(null, null), "unknown");
+});
+
+test("reportStaleSession: warns only when the terminal predates the aliases", async () => {
+  const { reportStaleSession } = await import("../src/commands/status.js");
+
+  const capture = (session, writtenAt) => {
+    const lines = [];
+    const real = console.log;
+    console.log = (s) => lines.push(String(s));
+    try {
+      reportStaleSession("zsh", session, writtenAt);
+    } finally {
+      console.log = real;
+    }
+    return lines.join("\n");
+  };
+
+  const opened = Date.parse("2026-09-18T19:00:00Z");
+  const changed = Date.parse("2026-09-18T20:00:00Z");
+
+  const stale = capture({ pid: 1, startedAt: opened }, changed);
+  assert.match(stale, /older than the aliases/);
+  // The remedy has to be in the output; a warning with no way out of it is
+  // just noise.
+  assert.match(stale, /source ~\/\.zshrc/);
+
+  // A session started after the change is fine, and so is either half being
+  // unknown. None of these may print anything at all.
+  assert.equal(capture({ pid: 1, startedAt: changed }, opened), "");
+  assert.equal(capture(null, changed), "");
+  assert.equal(capture({ pid: 1, startedAt: opened }, null), "");
 });

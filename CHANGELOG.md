@@ -3,6 +3,36 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## 0.1.27 (2026-09-18)
+
+### Added
+
+- `status` reports a terminal that is older than the aliases on disk.
+
+  A shell reads its rc file once, at startup. Everything `status` checked
+  until now was on disk, so a session opened before the last `add`, `rename`
+  or `remove` would pass every check while running aliases that no longer
+  match the file. After a rename it is worse than cosmetic: the old alias is
+  still defined, still runs, and still exports `CLAUDE_CONFIG_DIR` pointing
+  at a directory that has since been moved.
+
+  Aliases live in the shell process and a child process cannot read its
+  parent's alias table, so the check compares two times instead: when the
+  session shell started, and when the aliases last changed.
+
+  Knowing the second one required somewhere to record it. The rc file's mtime
+  is the wrong signal, since installers and their owners edit dotfiles for
+  unrelated reasons, and warning about somebody else's edit would be noise.
+  The managed block now carries its own timestamp, rewritten only when the
+  alias lines actually change, so a no-op write leaves the file byte
+  identical.
+
+  Every step degrades to staying quiet rather than guessing: a block written
+  before this release has no timestamp, a shell that cannot be found in the
+  process tree is not reported, and a one-shot `zsh -c` is not a session
+  anyone can re-source. Sending someone to fix a file that was already fine
+  is worse than saying nothing.
+
 ## 0.1.26 (2026-09-18)
 
 ### Added

@@ -171,6 +171,10 @@ Each profile ends with a "To launch" block naming the exact command. Worth readi
 
 Walks every profile and verifies the directories, .app, and shell aliases still exist. Also reports the resolved `claude` binary and warns when more than one is on your PATH. Useful after a machine migration or after manually editing your `.zshrc`.
 
+It also checks whether the terminal you are standing in agrees with the file. A shell reads its rc file once, at startup, so a session opened before your last `add`, `rename` or `remove` still has the aliases from back then. After a rename that is actively misleading: the old alias is still defined, still runs, and still points `CLAUDE_CONFIG_DIR` at a directory that has since been moved. Every check above would pass while the command in front of you is broken. When `status` sees a session older than the aliases, it says so and tells you to re-source or open a new terminal.
+
+This needs to know when the aliases last changed, which is not the same as when the rc file was last touched, since installers and you edit dotfiles for unrelated reasons. The managed block therefore carries its own timestamp, written only when the aliases actually change. Blocks written before v0.1.27 have no timestamp, so the check stays quiet for them until the next time your aliases change.
+
 ### `claude-multiprofile doctor [--fix]`
 
 Diagnoses the machine, not just the registry. Where `status` asks "is each profile's paperwork in order?", `doctor` asks "will these profiles actually behave?"

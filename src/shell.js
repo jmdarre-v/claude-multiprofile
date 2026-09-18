@@ -21,10 +21,25 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { HOME } from "./util.js";
 
 const BLOCK_START = "# >>> claude-multiprofile >>>";
 const BLOCK_END = "# <<< claude-multiprofile <<<";
+
+// A shell reads its rc file once, at startup. Every alias we write reaches
+// running terminals only when they are restarted or the file is re-sourced,
+// so a terminal opened before the last change keeps answering to aliases
+// that no longer exist on disk. Renaming a profile is the case that bites:
+// the old alias still runs and still points at the old config directory,
+// which has since been moved.
+//
+// Detecting that needs to know when OUR aliases last changed, which is not
+// the same as when the rc file was last touched. Dotfiles get edited by
+// installers and by their owners all the time, and warning about someone
+// else's edit to .zshrc would be noise. So the block carries its own
+// timestamp.
+const STAMP_PREFIX = "# updated ";
 
 // ---- Detection -----------------------------------------------------------
 
@@ -108,6 +123,20 @@ export function readManagedAliases(shell) {
     .filter((e) => e.name);
 }
 
+export function readAliasStamp(shell) {
+  // When our managed block last changed, in epoch ms, or null if the block
+  // predates stamping or is absent.
+  const { inside, hasBlock } = extractBlock(readRcFile(rcPathForShell(shell)));
+  if (!hasBlock) return null;
+  for (const line of inside.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith(STAMP_PREFIX)) continue;
+    const at = new Date(trimmed.slice(STAMP_PREFIX.length).trim()).getTime();
+    return Number.isFinite(at) ? at : null;
+  }
+  return null;
+}
+
 export function writeAliases(shell, aliasLines) {
   // Replace (or insert) our managed block with the given alias lines.
   // `aliasLines` is an array of full `alias foo='bar'` strings.
@@ -126,10 +155,23 @@ export function writeAliases(shell, aliasLines) {
     return rcPath;
   }
 
+  // Only re-stamp when the aliases actually differ. Rewriting the timestamp
+  // on a no-op write would claim a change that did not happen, and would
+  // churn the rc file for anyone who keeps their dotfiles in git.
+  const previous = readManagedAliases(shell).map((a) => a.line);
+  const unchanged =
+    hasBlock &&
+    previous.length === aliasLines.length &&
+    previous.every((line, i) => line === aliasLines[i]);
+  // An unchanged block with no stamp stays unstamped rather than gaining an
+  // invented one. It picks up a real timestamp the next time it changes.
+  const stamp = unchanged ? readAliasStamp(shell) : Date.now();
+
   const block = [
     BLOCK_START,
     "# Managed by claude-multiprofile. Edits inside this block may be overwritten.",
     "# Run `claude-multiprofile list` to see what's configured.",
+    ...(stamp ? [STAMP_PREFIX + new Date(stamp).toISOString()] : []),
     "",
     ...aliasLines,
     "",
@@ -170,4 +212,76 @@ export function buildAliasLine(shell, aliasName, configDir, ghConfigDir) {
     return `function ${aliasName}; ${prefix} claude $argv; end`;
   }
   return `alias ${aliasName}='${prefix} claude'`;
+}
+
+// ---- Is this terminal running the aliases that are on disk? ---------------
+//
+// Aliases live in the shell process, not on disk, and a child process cannot
+// read its parent shell's alias table. What it can do is compare two times:
+// when the shell started, and when the aliases last changed. A shell older
+// than the change is running whatever the file said back then.
+//
+// Every step below degrades to "unknown" rather than guessing, because a
+// wrong staleness warning is worse than none: it would send people to
+// re-source a file that was already fine.
+
+const SESSION_SHELLS = new Set(["zsh", "bash", "fish", "sh", "dash", "ksh", "tcsh", "csh"]);
+
+export function isSessionShell(command) {
+  // A login shell appears in ps as "-zsh", an interactive one as "/bin/zsh".
+  if (!command) return false;
+  const parts = String(command).trim().split(/\s+/);
+  const base = path.basename(parts[0].replace(/^-/, ""));
+  if (!SESSION_SHELLS.has(base)) return false;
+  // `zsh -c '...'` runs one command and exits, so it holds no alias state a
+  // user could act on. It is also how scripts and other tools invoke us,
+  // which would otherwise produce a warning about a shell that lived for
+  // milliseconds.
+  return !parts.slice(1).includes("-c");
+}
+
+export function parsePsRecord(line) {
+  // `ps -o ppid=,lstart=,command=` gives "PPID Www Mmm D HH:MM:SS YYYY cmd".
+  // lstart contains spaces, so the date is matched by shape rather than by
+  // splitting on whitespace.
+  const m = String(line).match(
+    /^\s*(\d+)\s+(\w{3}\s+\w{3}\s+\d+\s+\d+:\d+:\d+\s+\d{4})\s+(.*)$/
+  );
+  if (!m) return null;
+  const startedAt = new Date(m[2]).getTime();
+  if (!Number.isFinite(startedAt)) return null;
+  return { ppid: Number(m[1]), startedAt, command: m[3] };
+}
+
+function psRecord(pid) {
+  try {
+    return parsePsRecord(
+      execFileSync("ps", ["-o", "ppid=,lstart=,command=", "-p", String(pid)], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim()
+    );
+  } catch {
+    return null;
+  }
+}
+
+export function findSessionShell(startPid = process.ppid) {
+  // Usually the direct parent, but npm wrappers and `sudo` add a level or
+  // two, so walk up a bounded distance before giving up.
+  let pid = startPid;
+  for (let hops = 0; hops < 12 && pid > 1; hops++) {
+    const rec = psRecord(pid);
+    if (!rec) return null;
+    if (isSessionShell(rec.command)) {
+      return { pid, startedAt: rec.startedAt, command: rec.command };
+    }
+    pid = rec.ppid;
+  }
+  return null;
+}
+
+export function aliasSessionState(shellStartedAt, aliasesWrittenAt) {
+  if (!shellStartedAt || !aliasesWrittenAt) return "unknown";
+  return aliasesWrittenAt > shellStartedAt ? "stale" : "current";
 }

@@ -12,6 +12,9 @@ import {
   detectShell,
   rcPathForShell,
   readManagedAliases,
+  readAliasStamp,
+  findSessionShell,
+  aliasSessionState,
 } from "../shell.js";
 import {
   header,
@@ -141,4 +144,40 @@ export async function status() {
 
   info(`Registry: ${pathStr(tildify(registryLocation()))}`);
   info(`Shell: ${shell} (${pathStr(tildify(rcPathForShell(shell)))})`);
+  reportStaleSession(shell);
+}
+
+// Everything above this line checks what is on disk. This checks whether the
+// terminal you are reading the output in agrees with it, which is a different
+// question: a shell reads its rc file once, at startup, so a session opened
+// before the last `add`, `rename` or `remove` still has the old aliases.
+//
+// After a rename that is genuinely misleading. The old alias is still defined,
+// still runs, and still exports the old CLAUDE_CONFIG_DIR, which now points at
+// a directory that has been moved. `status` would report a healthy profile
+// while the alias in front of you is broken.
+// The two lookups are injectable so the warning itself can be tested. Both
+// depend on live machine state, and the half that actually reaches the user
+// is the wording, which is otherwise the one part nothing exercises.
+export function reportStaleSession(
+  shell,
+  session = findSessionShell(),
+  writtenAt = readAliasStamp(shell)
+) {
+  const state = aliasSessionState(session && session.startedAt, writtenAt);
+  if (state !== "stale") return;
+
+  const when = (ms) =>
+    new Date(ms).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
+  console.log("");
+  warn("This terminal is older than the aliases on disk.");
+  info(`  Session opened ${when(session.startedAt)}, aliases last changed ${when(writtenAt)}.`);
+  info("  The aliases above are correct in the file but not yet loaded here.");
+  info(`  Run ${command(`source ${tildify(rcPathForShell(shell))}`)} or open a new terminal.`);
 }
