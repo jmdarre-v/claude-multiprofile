@@ -674,11 +674,19 @@ function checkAccountCollisions(t, reg) {
   }
 }
 
-// ---- Check: coloured Claude clones ------------------------------------------
+// ---- Check: per-profile Claude clones ---------------------------------------
 //
-// A profile with a colour launches its own clone of Claude.app. Claude updates
+// Every Desktop profile launches its own clone of Claude.app. Claude updates
 // itself, and the clone does not, so a stale clone silently runs an old build.
 // That is a worse failure than having no colour, so it is worth finding.
+
+// Colour plays no part here: an uncoloured profile's clone goes stale just
+// the same.
+export function clonesToVersionCheck(profiles, exists = fileExists) {
+  return profiles.filter(
+    (p) => p.desktop && p.desktop.claudeAppPath && exists(clonePathFor(p.name))
+  );
+}
 
 function checkAppClones(t, reg, fix) {
   if (!isMac()) return;
@@ -726,14 +734,14 @@ function checkAppClones(t, reg, fix) {
     }
   }
 
-  const colored = desktop.filter((p) => p.desktop.color && fileExists(clonePathFor(p.name)));
-  for (const p of colored) {
+  for (const p of clonesToVersionCheck(desktop)) {
     const clone = clonePathFor(p.name);
+    const label = p.desktop.color ? `${p.desktop.color}, matching` : "matching";
     if (!fileExists(clone)) {
-      warn(`${p.name}: its ${p.desktop.color} clone is missing.`);
+      warn(`${p.name}: its clone is missing.`);
       info("  The launcher points at a copy that is no longer there.");
     } else if (!cloneIsStale(clone, p.desktop.claudeAppPath)) {
-      ok(`${p.name}: ${p.desktop.color}, matching Claude ${dim(cloneVersions(clone, p.desktop.claudeAppPath).source || "")}`);
+      ok(`${p.name}: ${label} Claude ${dim(cloneVersions(clone, p.desktop.claudeAppPath).source || "")}`);
       continue;
     } else {
       const v = cloneVersions(clone, p.desktop.claudeAppPath);
@@ -746,7 +754,7 @@ function checkAppClones(t, reg, fix) {
         ensureColoredClone({
           name: p.name,
           claudeAppPath: p.desktop.claudeAppPath,
-          color: p.desktop.color,
+          color: p.desktop.color || null,
           force: true,
         });
         ok("  Repaired: clone rebuilt from the current Claude.app.");
