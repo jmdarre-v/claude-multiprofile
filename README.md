@@ -386,10 +386,11 @@ Since v0.1.10, Code profiles get an enforceable guard. Every profile's `settings
 
 These are hard denials (they don't prompt), and Claude Code applies `Read` rules to Grep and Glob as well, so directory walks are covered too. The rules are rewritten automatically on `add`, `remove`, and `rename`, and `doctor --fix` repairs them if they drift.
 
-Three limits worth knowing:
+Four things worth knowing:
 
 - **Your own rules are preserved.** The tool tracks only the rules it wrote and never removes deny rules you added yourself.
 - **A symlinked `settings.json` is skipped.** If a profile's `settings.json` is a symlink pointing outside that profile (a common way to share one config across profiles), the rules are not written. Writing them would push one profile's rules into a file the others also read, and each profile would then strip the others' rules on every change. `doctor` reports the profile as unprotected and names the link target; replace the link with a real file to opt back in.
+- **You can turn it off.** If your profiles are meant to read each other's files, set `"readProtection": false` at the top level of `~/.config/claude-multiprofile/profiles.json`. The next `add`, `remove`, `rename`, or `doctor --fix` removes the rules it wrote (yours stay), none of them write new ones, and `doctor` stops reporting them as missing. Delete the key and run `doctor --fix` to turn it back on.
 - **Desktop profiles have no equivalent hook.** Claude Desktop is Electron, not Claude Code, so there's no settings-level permission system to use. Desktop profiles remain isolated by data directory only. True filesystem confinement there would require `sandbox-exec` or a container.
 
 ## Known limitations

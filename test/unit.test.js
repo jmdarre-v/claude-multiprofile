@@ -335,6 +335,30 @@ test("resyncDenyRules: preserves user-authored deny rules", () => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+test("resyncDenyRules: readProtection false strips our rules, keeps the user's, and stays off", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-perm-"));
+  const a = tmpProfile("alpha", root);
+  const b = tmpProfile("beta", root);
+  fs.writeFileSync(
+    settingsPathFor(a.code.configDir),
+    JSON.stringify({ permissions: { deny: ["Read(//etc/secrets/**)"] } }),
+    "utf8"
+  );
+  resyncDenyRules({ profiles: [a, b] });
+
+  const off = { readProtection: false, profiles: [a, b] };
+  quietly(() => resyncDenyRules(off));
+  resyncDenyRules(off);
+
+  const s = readSettings(a.code.configDir);
+  assert.deepEqual(s.permissions.deny, ["Read(//etc/secrets/**)"]);
+  assert.equal(s.claudeMultiprofileManagedDeny, undefined);
+  assert.deepEqual(readSettings(b.code.configDir).permissions.deny, []);
+  assert.deepEqual(auditDenyRules(off), [], "doctor must not report the absent rules as drift");
+
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test("resyncDenyRules: drops stale rules when a profile goes away, and is idempotent", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-perm-"));
   const a = tmpProfile("alpha", root);

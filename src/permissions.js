@@ -192,11 +192,24 @@ function resyncOne(profile, allProfiles) {
   return { name: profile.name, settingsPath, ruleCount: managed.length };
 }
 
+// Opting out is registry-wide: profiles that deliberately share context need
+// every profile readable, and one protected profile would still be blocked.
+export function readProtectionEnabled(registry) {
+  return !registry || registry.readProtection !== false;
+}
+
 // Rewrite deny rules for every Code profile in the registry. Call after any
 // change to the profile set (add / remove / rename). `opts.verbose` prints a
 // line per updated profile; otherwise it works quietly.
 export function resyncDenyRules(registry, opts = {}) {
   const profiles = (registry && registry.profiles) || [];
+  if (!readProtectionEnabled(registry)) {
+    const stripped = profiles.filter((p) => stripManagedDenyRules(p));
+    if (opts.verbose && stripped.length > 0) {
+      ok(`Removed cross-profile read-protection from ${stripped.map((p) => p.name).join(", ")}.`);
+    }
+    return [];
+  }
   const results = [];
   for (const p of profiles) {
     const r = resyncOne(p, profiles);
@@ -275,6 +288,7 @@ export function stripManagedDenyRules(profile) {
 // Read-only inspection for `doctor`: does each Code profile's settings.json
 // actually deny every sibling it should? Returns per-profile findings.
 export function auditDenyRules(registry) {
+  if (!readProtectionEnabled(registry)) return [];
   const profiles = (registry && registry.profiles) || [];
   const findings = [];
   for (const p of profiles) {
