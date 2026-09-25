@@ -43,7 +43,7 @@ import {
 } from "../desktop.js";
 import { DEFAULT_CLAUDE_CONFIG_DIR, ghTokenOverride } from "../code.js";
 import { clonePathFor, cloneIsStale, cloneVersions, ensureColoredClone } from "../appclone.js";
-import { resyncDenyRules, auditDenyRules } from "../permissions.js";
+import { resyncDenyRules, auditDenyRules, readProtectionEnabled } from "../permissions.js";
 import { detectShell, rcPathForShell, readManagedAliases } from "../shell.js";
 import {
   HOME,
@@ -963,6 +963,12 @@ function checkGhIsolation(t, reg, fix) {
 
 function checkDenyRules(t, reg, fix) {
   step("Cross-profile read protection");
+
+  if (!readProtectionEnabled(reg)) {
+    info(`Off: ${dim('"readProtection": false')} in ${tildify(registryLocation())}.`);
+    if (fix) resyncDenyRules(reg, { verbose: true });
+    return;
+  }
 
   const findings = auditDenyRules(reg);
   if (findings.length === 0) {
