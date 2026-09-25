@@ -115,7 +115,9 @@ What it costs, stated plainly:
 
 - **Disk: a few megabytes, not a few hundred.** The copy is an APFS clone (`cp -Rc`), so its blocks are shared with the original until one side changes. Measured on an 800MB Claude.app: about 1.5 seconds and 3MB of real disk.
 - **Signature: identity survives, strict verification does not.** The tint is attached as Finder metadata rather than by editing the bundle, so the copy still reports `com.anthropic.claudefordesktop` with Anthropic's Team ID, and Gatekeeper accepts it. `codesign --verify --deep --strict` does fail on it, the same as for any app carrying a custom icon.
-- **Claude updates itself; the copy does not.** `doctor` detects a clone built from an older Claude and `doctor --fix` rebuilds it.
+- **The copy updates itself, and each update costs you the colour.** An earlier version of this README said the copy does not update. That was wrong, as [issue #9](https://github.com/jmdarre-v/claude-multiprofile/issues/9) showed. The copy is a real Claude.app, so Claude's own updater runs inside it and replaces the whole app, which throws away the tint. `doctor` checks the colour directly, and `doctor --fix` puts it back without rebuilding anything.
+- **The copy can be newer than `/Applications/Claude.app`, and that is fine.** If the copy updated itself first, it is kept. Only a copy that is *behind* the installed Claude gets rebuilt, since rebuilding a newer one would be a downgrade.
+- **After an update, Claude relaunches the copy on the wrong account.** The updater restarts the copy directly, without the launcher's `--user-data-dir`, so the relaunched window runs on the shared default profile. `doctor` reports a copy running this way. Quit it and reopen from the launcher: clicking the launcher while that window is open only brings the same window forward.
 
 `remove` deletes the copy along with the profile. No build tools are required: the tinting and icon work go through `osascript`, which ships with macOS.
 

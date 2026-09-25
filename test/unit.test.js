@@ -1200,3 +1200,59 @@ test("parseManagedLine: reads fish functions as well as zsh aliases", async () =
   assert.equal(parseManagedLine(""), null);
   assert.equal(parseManagedLine("   "), null);
 });
+
+// ---------------------------------------------------------------------------
+// appclone.js - a copy that updated itself (issue #9)
+// ---------------------------------------------------------------------------
+
+test("compareCloneVersions: a copy ahead of its source is not stale", async () => {
+  const { compareCloneVersions } = await import("../src/appclone.js");
+
+  // The reported case: Claude's updater ran inside the copy and took it past
+  // /Applications. Treating any difference as staleness made `doctor --fix`
+  // offer to replace it with the older build.
+  assert.equal(compareCloneVersions("2.9939.2", "2.7032.0"), "ahead");
+  assert.equal(compareCloneVersions("2.7032.0", "2.9939.2"), "behind");
+  assert.equal(compareCloneVersions("2.9939.2", "2.9939.2"), "current");
+
+  // Numeric, not lexical: "10" sorts before "9" as a string.
+  assert.equal(compareCloneVersions("2.10.0", "2.9.0"), "ahead");
+  assert.equal(compareCloneVersions("1.52386.0", "2.9939.2"), "behind");
+
+  // An unreadable version must never trigger a rebuild.
+  assert.equal(compareCloneVersions(null, "2.9939.2"), "unknown");
+  assert.equal(compareCloneVersions("2.9939.2", null), "unknown");
+});
+
+test("cloneIsStale: only a missing or older copy needs building", async () => {
+  const { cloneIsStale } = await import("../src/appclone.js");
+  // Missing is stale; this path does not need a real app on disk.
+  assert.equal(cloneIsStale("/nonexistent/Claude x.app", "/Applications/Claude.app"), true);
+});
+
+test("finderInfoHasCustomIcon: reads the kHasCustomIcon bit from xattr output", async () => {
+  const { finderInfoHasCustomIcon } = await import("../src/appclone.js");
+
+  // Captured from a copy the tool had just tinted.
+  const tinted =
+    "00 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00 \n" +
+    "00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 \n";
+  assert.equal(finderInfoHasCustomIcon(tinted), true);
+
+  // Other Finder flags set (0x0040 in byte 9), custom icon not.
+  const other = "00 00 00 00 00 00 00 00 00 40 00 00 00 00 00 00";
+  assert.equal(finderInfoHasCustomIcon(other), false);
+
+  assert.equal(finderInfoHasCustomIcon(""), false);
+  assert.equal(finderInfoHasCustomIcon("00 00 00"), false);
+  assert.equal(finderInfoHasCustomIcon(undefined), false);
+});
+
+test("hasCustomIcon: no Icon\\r file means no colour, whatever the flags say", async () => {
+  const { hasCustomIcon } = await import("../src/appclone.js");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-icon-"));
+  // An update swaps the whole bundle directory, so the Icon\r file is the
+  // first thing to go. Without it Finder has no image to show.
+  assert.equal(hasCustomIcon(dir), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

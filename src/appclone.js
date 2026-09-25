@@ -31,12 +31,29 @@
 // Everything here runs through `osascript -l JavaScript`, which has an
 // Objective-C bridge and ships with macOS. No compiler, no Xcode Command Line
 // Tools, no new npm dependency.
+//
+// The copy updates itself (issue #9):
+//
+// A clone is a real Claude.app, so Claude's own updater (Squirrel's ShipIt)
+// runs inside it. It downloads the new build and swaps the whole bundle
+// directory, then relaunches the copy directly. Three consequences, each
+// handled here or in doctor:
+//
+//   - The copy can be NEWER than /Applications/Claude.app. That is not
+//     staleness. Rebuilding from the source would be a downgrade, of a
+//     profile whose data a newer build has already opened. So versions are
+//     compared numerically, and only a copy that is behind gets rebuilt.
+//   - The tint is Finder metadata on the old bundle directory, so it goes out
+//     with it. Checking the version says nothing about whether the colour is
+//     still there; hasCustomIcon does.
+//   - The relaunch has no --user-data-dir, so the relaunched window runs on
+//     the shared default profile. doctor's launch-path check reports it.
 
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { HOME, fileExists, tildify } from "./util.js";
+import { HOME, fileExists, tildify, compareVersions } from "./util.js";
 
 // Where per-profile clones live. Outside ~/Applications so they do not clutter
 // the app list the user browses; the launcher is the thing meant to be visible.
@@ -147,15 +164,30 @@ function appVersion(appPath) {
   }
 }
 
-// True when the clone is missing or built from a different Claude version.
-// Claude updates itself, and a stale clone would keep running the old build
-// forever, which is a worse failure than having no colour at all.
+// Where a copy stands against the Claude.app it was built from:
+//   "current"  same version
+//   "behind"   the source is newer; rebuilding is an upgrade
+//   "ahead"    the copy updated itself past its source; rebuilding would be
+//              a downgrade, so leave it alone
+//   "unknown"  a version could not be read; also leave it alone
+// Compared numerically. Treating any difference as staleness is what made
+// `doctor --fix` offer to replace a self-updated copy with an older build.
+export function compareCloneVersions(cloneVersion, sourceVersion) {
+  if (!cloneVersion || !sourceVersion) return "unknown";
+  const c = compareVersions(cloneVersion, sourceVersion);
+  if (c === 0) return "current";
+  return c < 0 ? "behind" : "ahead";
+}
+
+export function cloneState(clonePath, claudeAppPath) {
+  if (!fileExists(clonePath)) return "missing";
+  return compareCloneVersions(appVersion(clonePath), appVersion(claudeAppPath));
+}
+
+// True when the copy needs building: missing, or older than its source.
 export function cloneIsStale(clonePath, claudeAppPath) {
-  if (!fileExists(clonePath)) return true;
-  const a = appVersion(claudeAppPath);
-  const b = appVersion(clonePath);
-  if (!a || !b) return false; // cannot tell; leave it alone
-  return a !== b;
+  const state = cloneState(clonePath, claudeAppPath);
+  return state === "missing" || state === "behind";
 }
 
 export function cloneVersions(clonePath, claudeAppPath) {
@@ -188,8 +220,38 @@ export function ensureColoredClone({ name, claudeAppPath, color, force = false }
     }
   }
 
-  if (color) applyColor(clonePath, claudeAppPath, color);
+  // Tint from the copy's own icon, not the source's. A copy that updated
+  // itself can be a newer build than /Applications, and its icon is the one
+  // that belongs on its tile.
+  if (color) applyColor(clonePath, clonePath, color);
   return clonePath;
+}
+
+// Did the tint survive? A custom icon on a directory is two things, and
+// Finder needs both: an `Icon\r` file inside it holding the image, and the
+// kHasCustomIcon bit (0x0400) in the directory's FinderInfo flags. An update
+// swaps the whole bundle directory, which drops both.
+export function finderInfoHasCustomIcon(hexDump) {
+  // `xattr -px` prints space-separated hex bytes across lines. The Finder
+  // flags are big-endian bytes 8 and 9; kHasCustomIcon is 0x04 in byte 8.
+  const bytes = String(hexDump || "").trim().split(/\s+/).filter(Boolean);
+  if (bytes.length < 10) return false;
+  const hi = parseInt(bytes[8], 16);
+  return Number.isFinite(hi) && (hi & 0x04) !== 0;
+}
+
+export function hasCustomIcon(appPath) {
+  if (!fileExists(path.join(appPath, "Icon\r"))) return false;
+  try {
+    return finderInfoHasCustomIcon(
+      execFileSync("/usr/bin/xattr", ["-px", "com.apple.FinderInfo", appPath], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+    );
+  } catch {
+    return false; // no FinderInfo at all means no custom icon
+  }
 }
 
 export function applyColor(clonePath, claudeAppPath, color) {

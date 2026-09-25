@@ -42,7 +42,14 @@ import {
   DEFAULT_APPLET_BUNDLE_ID,
 } from "../desktop.js";
 import { DEFAULT_CLAUDE_CONFIG_DIR, ghTokenOverride } from "../code.js";
-import { clonePathFor, cloneIsStale, cloneVersions, ensureColoredClone } from "../appclone.js";
+import {
+  clonePathFor,
+  cloneState,
+  cloneVersions,
+  ensureColoredClone,
+  applyColor,
+  hasCustomIcon,
+} from "../appclone.js";
 import { resyncDenyRules, auditDenyRules } from "../permissions.js";
 import { detectShell, rcPathForShell, readManagedAliases } from "../shell.js";
 import {
@@ -676,9 +683,11 @@ function checkAccountCollisions(t, reg) {
 
 // ---- Check: coloured Claude clones ------------------------------------------
 //
-// A profile with a colour launches its own clone of Claude.app. Claude updates
-// itself, and the clone does not, so a stale clone silently runs an old build.
-// That is a worse failure than having no colour, so it is worth finding.
+// A profile with a colour launches its own clone of Claude.app. The clone is a
+// real Claude, so its updater runs inside it (issue #9): the copy can end up
+// behind its source (never launched, never updated), level with it, or ahead
+// of it (updated itself). Only "behind" is worth rebuilding. Separately, any
+// update discards the tint, so the colour is checked on its own.
 
 function checkAppClones(t, reg, fix) {
   if (!isMac()) return;
@@ -729,29 +738,59 @@ function checkAppClones(t, reg, fix) {
   const colored = desktop.filter((p) => p.desktop.color && fileExists(clonePathFor(p.name)));
   for (const p of colored) {
     const clone = clonePathFor(p.name);
-    if (!fileExists(clone)) {
-      warn(`${p.name}: its ${p.desktop.color} clone is missing.`);
-      info("  The launcher points at a copy that is no longer there.");
-    } else if (!cloneIsStale(clone, p.desktop.claudeAppPath)) {
-      ok(`${p.name}: ${p.desktop.color}, matching Claude ${dim(cloneVersions(clone, p.desktop.claudeAppPath).source || "")}`);
-      continue;
-    } else {
-      const v = cloneVersions(clone, p.desktop.claudeAppPath);
-      warn(`${p.name}: clone is Claude ${v.clone}, but ${v.source} is installed.`);
+    const v = cloneVersions(clone, p.desktop.claudeAppPath);
+    const state = cloneState(clone, p.desktop.claudeAppPath);
+
+    // Behind its source: rebuilding is an upgrade, and re-tints on the way.
+    if (state === "behind") {
+      warn(`${p.name}: copy is Claude ${v.clone}, but ${v.source} is installed.`);
       info("  This profile would keep launching the older build.");
+      if (fix) {
+        try {
+          ensureColoredClone({
+            name: p.name,
+            claudeAppPath: p.desktop.claudeAppPath,
+            color: p.desktop.color,
+            force: true,
+          });
+          ok("  Repaired: copy rebuilt from the current Claude.app.");
+        } catch (e) {
+          err(`  Could not rebuild the copy: ${e.message}`);
+          t.problems++;
+        }
+      } else {
+        info(`  Repair with ${command("claude-multiprofile doctor --fix")}`);
+        t.warnings++;
+      }
+      continue;
     }
 
+    // Ahead of its source means Claude's updater ran inside the copy. That is
+    // a working, newer build: keep it. Rebuilding would be a downgrade.
+    if (state === "ahead") {
+      info(`${p.name}: copy is Claude ${v.clone}, newer than the installed ${v.source}.`);
+      info("  Claude updated this copy itself. Keeping it; rebuilding from the");
+      info("  installed app would be a downgrade.");
+    }
+
+    // A matching version says nothing about the colour. An update swaps the
+    // whole bundle directory, and the tint is Finder metadata on the old one.
+    if (hasCustomIcon(clone)) {
+      ok(`${p.name}: ${p.desktop.color}, Claude ${dim(v.clone || "")}`);
+      continue;
+    }
+
+    warn(`${p.name}: its ${p.desktop.color} colour is gone.`);
+    info("  A Claude update replaces the whole app, and the colour went with it.");
     if (fix) {
       try {
-        ensureColoredClone({
-          name: p.name,
-          claudeAppPath: p.desktop.claudeAppPath,
-          color: p.desktop.color,
-          force: true,
-        });
-        ok("  Repaired: clone rebuilt from the current Claude.app.");
+        // Re-tint in place from the copy's own icon. No rebuild: the build
+        // itself is fine, and may be newer than anything we could copy.
+        applyColor(clone, clone, p.desktop.color);
+        refreshLauncher(clone);
+        ok(`  Repaired: ${p.desktop.color} re-applied. The Dock shows it from the next launch.`);
       } catch (e) {
-        err(`  Could not rebuild the clone: ${e.message}`);
+        err(`  Could not re-apply the colour: ${e.message}`);
         t.problems++;
       }
     } else {
