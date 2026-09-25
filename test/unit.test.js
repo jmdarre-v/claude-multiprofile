@@ -1049,6 +1049,23 @@ test("parseRunningCopies: ignores helper processes", async () => {
   assert.deepEqual(parseRunningCopies(ps, COPY), []);
 });
 
+test("clonesToVersionCheck: an uncoloured profile's clone is checked too", async () => {
+  const { clonesToVersionCheck } = await import("../src/commands/doctor.js");
+  const { clonePathFor } = await import("../src/appclone.js");
+
+  const desktop = (color) => ({ claudeAppPath: "/Applications/Claude.app", color });
+  const profiles = [
+    { name: "work", desktop: desktop(null) },
+    { name: "personal", desktop: desktop("green") },
+    { name: "legacy", desktop: desktop("blue") },
+    { name: "codeonly", code: { configDir: "/x" } },
+  ];
+  const onDisk = new Set(["work", "personal", "codeonly"].map(clonePathFor));
+
+  const names = clonesToVersionCheck(profiles, (p) => onDisk.has(p)).map((p) => p.name);
+  assert.deepEqual(names, ["work", "personal"]);
+});
+
 test("parseRunningCopies: does not match a different profile's copy", async () => {
   const { parseRunningCopies } = await import("../src/commands/doctor.js");
 

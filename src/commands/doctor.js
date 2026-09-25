@@ -681,13 +681,22 @@ function checkAccountCollisions(t, reg) {
   }
 }
 
-// ---- Check: coloured Claude clones ------------------------------------------
+// ---- Check: per-profile Claude clones ---------------------------------------
 //
-// A profile with a colour launches its own clone of Claude.app. The clone is a
-// real Claude, so its updater runs inside it (issue #9): the copy can end up
-// behind its source (never launched, never updated), level with it, or ahead
-// of it (updated itself). Only "behind" is worth rebuilding. Separately, any
-// update discards the tint, so the colour is checked on its own.
+// Every Desktop profile launches its own clone of Claude.app, coloured or not
+// (#7). The clone is a real Claude, so its updater runs inside it (#9): the
+// copy can end up behind its source (never launched, never updated), level
+// with it, or ahead of it (updated itself). Only "behind" is worth
+// rebuilding. Separately, any update discards a tint, so a coloured copy's
+// colour is checked on its own.
+
+// Colour plays no part here: an uncoloured profile's clone goes stale just
+// the same.
+export function clonesToVersionCheck(profiles, exists = fileExists) {
+  return profiles.filter(
+    (p) => p.desktop && p.desktop.claudeAppPath && exists(clonePathFor(p.name))
+  );
+}
 
 function checkAppClones(t, reg, fix) {
   if (!isMac()) return;
@@ -735,8 +744,7 @@ function checkAppClones(t, reg, fix) {
     }
   }
 
-  const colored = desktop.filter((p) => p.desktop.color && fileExists(clonePathFor(p.name)));
-  for (const p of colored) {
+  for (const p of clonesToVersionCheck(desktop)) {
     const clone = clonePathFor(p.name);
     const v = cloneVersions(clone, p.desktop.claudeAppPath);
     const state = cloneState(clone, p.desktop.claudeAppPath);
@@ -750,7 +758,7 @@ function checkAppClones(t, reg, fix) {
           ensureColoredClone({
             name: p.name,
             claudeAppPath: p.desktop.claudeAppPath,
-            color: p.desktop.color,
+            color: p.desktop.color || null,
             force: true,
           });
           ok("  Repaired: copy rebuilt from the current Claude.app.");
@@ -771,6 +779,12 @@ function checkAppClones(t, reg, fix) {
       info(`${p.name}: copy is Claude ${v.clone}, newer than the installed ${v.source}.`);
       info("  Claude updated this copy itself. Keeping it; rebuilding from the");
       info("  installed app would be a downgrade.");
+    }
+
+    // An uncoloured copy has no tint to lose, so the version was the check.
+    if (!p.desktop.color) {
+      ok(`${p.name}: Claude ${dim(v.clone || "")}`);
+      continue;
     }
 
     // A matching version says nothing about the colour. An update swaps the
