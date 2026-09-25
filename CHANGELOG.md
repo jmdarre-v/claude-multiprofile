@@ -3,6 +3,48 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## 0.1.28 (2026-09-25)
+
+### Fixed
+
+- A profile's copy of Claude that updated itself is no longer treated as
+  stale, and its lost colour is detected and restored. Reported by
+  @zainzafar in #9.
+
+  Each profile's copy is a real Claude.app, so Claude's updater runs inside
+  it, replaces the whole app, and relaunches it. The README said the copy
+  does not update itself. That was wrong, and three problems followed:
+
+  - Versions were compared with `!==`, so a copy that had updated past
+    `/Applications/Claude.app` counted as stale. `doctor` said the profile
+    "would keep launching the older build", which is backwards, and
+    `doctor --fix` would have rebuilt it from the older app. Re-running
+    `add` for the profile would have done the same. Versions are now
+    compared numerically, and only a copy that is behind gets rebuilt.
+  - The colour is Finder metadata on the app's folder, so an update throws
+    it away. `doctor` only checked versions, so it reported a copy as
+    healthy whether or not the colour was still there. It now checks the
+    icon itself, and `--fix` re-applies the colour in place without
+    rebuilding.
+  - The updater relaunches the copy without `--user-data-dir`, so the new
+    window runs on the default account. The launch-path check added in
+    0.1.26 reports it, and the README now explains it.
+
+- `doctor` version-checks every profile's copy, not only coloured ones.
+  Contributed by Jake Barnby (@abnegate) in #7. Merged after the fix above,
+  since the old comparison would otherwise have offered uncoloured copies
+  the same downgrade.
+
+### Added
+
+- `"readProtection": false` at the top level of the registry turns off
+  cross-profile read protection, for setups where profiles are meant to
+  read each other's files. Every command that rewrites the rules removes
+  the ones the tool wrote instead, your own deny rules stay, and `doctor`
+  shows the check as off rather than reporting drift. Delete the key and
+  run `doctor --fix` to turn it back on. Contributed by Jake Barnby
+  (@abnegate) in #8.
+
 ## 0.1.27 (2026-09-18)
 
 ### Added
