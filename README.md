@@ -416,19 +416,19 @@ The Code half works fine on Linux, the Desktop half doesn't (Claude Desktop is m
 
 Several good tools work on this problem, and they make different trade-offs. The main one is whether accounts run **side by side**, each in its own window or terminal at the same time, or whether you **switch** one active account. Each row below is based on that project's own README as of September 2026.
 
-| Tool | Desktop | Code | Accounts at once | Notes |
-|------|---------|------|------------------|-------|
-| claude-multiprofile (this) | yes | yes | side by side, Desktop and Code | Interactive wizard; per-profile GitHub CLI login; `doctor --fix`; each Desktop profile kept current on launch |
-| [Claude Profiles](https://github.com/ajipurn/claude-profiles) | yes | yes | switch | Menu bar app; per-account usage limits read from Claude's local cache |
-| [claude-profiles](https://github.com/calebbarzee/claude-profiles) | yes | sessions | side by side, Desktop | Moves Claude Code sessions into Desktop profiles; `backup`, `undo`, `--dry-run` |
-| [claude-desktop-profiles](https://github.com/odahcam/claude-desktop-profiles) | yes | no | side by side, Desktop | Per-profile Dock colours |
-| [aimux](https://github.com/Digital-Threads/aimux) | no | yes | side by side | `doctor`, live usage in `status`, shares files between profiles with symlinks |
-| [aisw](https://github.com/burakdede/aisw) | no | yes | switch | Also Codex CLI, Gemini CLI and Antigravity CLI |
-| Manual setup | yes | yes | side by side | Documented in [several](https://daring-designs.com/blog/how-to-run-multiple-claude-code-accounts-side-by-side) [places](https://wmedia.es/en/tips/claude-code-multiple-profiles-config-dir) |
+| Tool | Desktop | Code | Accounts at once | GitHub login per profile | Diagnostics | Notes |
+|------|---------|------|------------------|--------------------------|-------------|-------|
+| **claude-multiprofile** (this) | ✅ | ✅ | ✅ side by side, Desktop and Code | ✅ | ✅ diagnose and repair (`doctor`, `--fix`) | Interactive wizard; each Desktop profile kept current on launch |
+| [Claude Profiles](https://github.com/ajipurn/claude-profiles) | ✅ | ✅ | switch | ❌ | ❌ | Menu bar app; per-account usage limits from Claude's local cache |
+| [claude-profiles](https://github.com/calebbarzee/claude-profiles) | ✅ | sessions | ✅ side by side, Desktop | ❌ | partial (`inspect`, `optimize`) | Moves Claude Code sessions into Desktop profiles; `backup`, `undo`, `--dry-run` |
+| [claude-desktop-profiles](https://github.com/odahcam/claude-desktop-profiles) | ✅ | ❌ | ✅ side by side, Desktop | ❌ | ❌ | Per-profile Dock colours |
+| [aimux](https://github.com/Digital-Threads/aimux) | ❌ | ✅ | ✅ side by side | ❌ | diagnose (`doctor`) | Live usage in `status`; shares files between profiles with symlinks |
+| [aisw](https://github.com/burakdede/aisw) | ❌ | ✅ | switch | ❌ | ✅ diagnose and repair (`doctor`, `repair`) | Also Codex CLI, Gemini CLI and Antigravity CLI |
+| Manual setup | ✅ | ✅ | ✅ side by side | by hand | ❌ | Documented in [several](https://daring-designs.com/blog/how-to-run-multiple-claude-code-accounts-side-by-side) [places](https://wmedia.es/en/tips/claude-code-multiple-profiles-config-dir) |
 
 [Jean-Claude](https://madewithlove.com/blog/running-multiple-claude-accounts-without-logging-out/) is a dotfiles approach for Claude Code with cross-machine sync, described in a blog post rather than shipped as a tool.
 
-Where this one fits: if you want Claude Desktop **and** Claude Code for several accounts open at the same time, with each profile's GitHub login following along, and a `doctor` that keeps all of it working as Claude updates itself. If you only use Claude Code, or prefer switching one active account, the tools above may suit you better.
+Where this one fits: Claude Desktop **and** Claude Code for several accounts open at the same time, each profile carrying its own GitHub login so `gh` acts as the right account, and a `doctor` that finds what drifted and repairs it as Claude updates itself. It is the only one of these that gives each profile its own GitHub login, and one of the few with a `doctor` that repairs what it finds rather than only reporting it. If you only use Claude Code, or prefer switching one active account, the tools above may suit you better.
 
 ## Profile isolation
 

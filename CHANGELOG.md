@@ -63,8 +63,9 @@ project is pre-1.0, so minor breakage may occur between 0.x releases.
 - The README's comparison with similar tools no longer claims this is the
   only one handling Claude Desktop alongside Claude Code; that stopped being
   true. The table now compares what each tool actually does, checked against
-  each project's own README: Desktop, Code, and whether accounts run side by
-  side or you switch one active account.
+  each project's own README: Desktop, Code, whether accounts run side by
+  side or you switch one active account, a GitHub login per profile (which
+  none of the others offer), and diagnostics.
 
 ## 0.1.30 (2026-09-27)
 
