@@ -6,9 +6,23 @@
 [![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org/)
 [![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)](https://www.apple.com/macos/)
 
-Run multiple Claude accounts side by side on macOS. Personal and work, multiple clients, separate test accounts. Each profile is fully isolated: its own login, chats, settings, MCP connectors, plugins, and skills. No more signing out of one account to use another.
+**Run multiple Claude accounts side by side.** Personal, work, clients. Claude Desktop and Claude Code. No more signing out of one account to use another.
 
-Works for both Claude Desktop (the GUI app) and Claude Code (the terminal CLI), independently or together.
+```bash
+npm install -g claude-multiprofile
+claude-multiprofile add
+```
+
+Each profile gets its own login, chats, settings, MCP servers, plugins and skills, and its own Dock icon and terminal command:
+
+```
+Dock:      Claude        Claude WORK        Claude CLIENT
+Terminal:  claude        claude-work        claude-client
+```
+
+- **Desktop and Code**, separately or together. Desktop profiles need macOS; Code profiles work on macOS and Linux.
+- **Your existing Claude is untouched.** Profiles sit alongside it.
+- **`doctor` keeps it working.** Claude updates itself, shells change, launchers get re-pinned. `doctor` finds what drifted, including a profile quietly open on the wrong account, and `doctor --fix` repairs what it safely can.
 
 > **See it in action:** [examples/walkthrough.md](./examples/walkthrough.md), a full session showing every prompt and output.
 
@@ -26,7 +40,7 @@ Both work. Both are fiddly to set up and easy to mess up. This tool automates th
 - Generating a real macOS `.app` launcher you can drag to the Dock
 - Copying the Claude icon onto the launcher so it's visually distinct
 - Adding a properly quoted shell alias to the right rc file (zsh, bash, fish)
-- Seeding new Code profiles from your existing `~/.claude` so plugins and MCP servers carry over (without leaking auth)
+- Copying your Claude Code setup (settings, skills, commands, plugins, MCP servers) into a new profile, without your conversations, history or sign-in
 - Tracking everything in a registry so you can list, status-check, and cleanly remove profiles
 
 ## Install
@@ -144,9 +158,11 @@ Profiles created before v0.1.29 are switched over by `claude-multiprofile doctor
 
 Claude Code (the terminal CLI) honors the `CLAUDE_CONFIG_DIR` environment variable. Set it to a folder, and Claude Code reads/writes all of its state (project memory, plugins, skills, MCP servers, slash commands) under that folder instead of the default `~/.claude`.
 
-Authentication is the interesting bit. Claude Code stores its OAuth token in macOS Keychain, keyed by a SHA-256 hash of the active `CLAUDE_CONFIG_DIR`. Different config dir, different keychain entry, completely separate session. You can copy a config folder around without leaking auth.
+Authentication is the interesting bit. Claude Code stores its OAuth token in the macOS Keychain under a key derived from the active `CLAUDE_CONFIG_DIR`. Different config dir, different Keychain entry, separate session.
 
-This means you can seed a new Code profile from your existing `~/.claude` (carrying over skills, plugins, and MCP servers) and the new profile will still ask you to log in fresh. The wizard offers this by default.
+The wizard offers to copy your existing Claude Code setup into a new profile, so you don't redo it: `settings.json`, `CLAUDE.md`, skills, slash commands, agents, hooks, output styles, installed plugins, and your MCP servers (the `mcpServers` entry of `~/.claude.json`, and nothing else from that file). It works from an allowlist: anything not on that list stays behind, including your conversations (`projects/`), prompt history, sessions, shell snapshots, caches, plugin data and anything added in future that the tool doesn't know about. Paths in plugin manifests and settings that pointed into `~/.claude` are pointed at the new profile's own copies, so it doesn't keep loading plugins or hooks from your default setup. The new profile still asks you to sign in fresh.
+
+Profiles created before v0.1.31 were seeded by copying the whole of `~/.claude`, which brought conversation history along. `doctor` reports how many conversations a profile got that way. It doesn't delete them: whether to keep them is up to you.
 
 ## Commands
 
@@ -160,7 +176,7 @@ Interactive wizard. Walks through:
 4. Where to save the launcher .app (Desktop only)
 5. Whether to copy the Claude icon onto the launcher (Desktop only)
 6. The shell alias name (Code only)
-7. Whether to seed the new Code profile from your existing `~/.claude` (Code only)
+7. Whether to copy your Claude Code setup into the new profile (Code only; conversations and sign-in never come along)
 
 Then prints a plan, asks for confirmation, and applies.
 

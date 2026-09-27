@@ -94,49 +94,216 @@ export function ensureConfigDir(configDir, { seedFromDefault } = {}) {
   if (fs.existsSync(configDir)) return false;
 
   if (seedFromDefault && fs.existsSync(DEFAULT_CLAUDE_CONFIG_DIR)) {
-    // Copy the user's existing ~/.claude into the new dir. This carries
-    // over skills, plugins, MCP server config, slash commands, and any
-    // CLAUDE.md they have at the user level. Auth stays in Keychain so
-    // it won't follow.
-    //
-    // We use `cp -R` rather than fs.cpSync because cp handles macOS
-    // metadata (extended attrs, resource forks) more faithfully and
-    // is just as fast for typical config sizes.
-    fs.mkdirSync(path.dirname(configDir), { recursive: true });
-    execFileSync("/bin/cp", [
-      "-R",
-      DEFAULT_CLAUDE_CONFIG_DIR + "/",
-      configDir,
-    ]);
-
-    // Wipe anything that looks like a credential file inside the seeded
-    // copy. Claude Code's auth lives in Keychain, not on disk, so this is
-    // mostly belt-and-suspenders for older installs and project-level
-    // .credentials.json files. Better safe than carrying over a stale
-    // token that confuses login.
-    cleanCredentialsFromDir(configDir);
-  } else {
-    fs.mkdirSync(configDir, { recursive: true });
+    return seedConfigDir(DEFAULT_CLAUDE_CONFIG_DIR, configDir);
   }
+  fs.mkdirSync(configDir, { recursive: true });
   return true;
 }
 
-function cleanCredentialsFromDir(dir) {
-  // Remove known credential filenames if the user had any stashed locally.
-  const candidates = [
-    path.join(dir, ".credentials.json"),
-    path.join(dir, "credentials.json"),
-    path.join(dir, "auth.json"),
-  ];
-  for (const c of candidates) {
-    if (fs.existsSync(c)) {
-      try {
-        fs.rmSync(c);
-      } catch {
-        // Non-fatal; user can delete manually if needed.
-      }
-    }
+// ---- Seeding a new profile from an existing setup -----------------------
+//
+// Until v0.1.31 this copied the whole of ~/.claude and then deleted three
+// credential filenames. That is a denylist, and it failed in the direction
+// that matters: it copied the default account's conversation transcripts
+// (projects/) and prompt history (history.jsonl) into every seeded profile,
+// which is exactly the cross-account bleed a profile exists to prevent. It
+// would also have copied any credential file Anthropic adds in future under
+// a name we do not know yet.
+//
+// So it is an allowlist now: what a new profile takes is named here, and
+// anything not named stays behind, including anything that does not exist
+// yet. The rule for inclusion is "setup you would otherwise redo by hand",
+// never "state from using an account".
+
+// Top-level entries of ~/.claude that are setup.
+export const SEED_ITEMS = [
+  "settings.json",
+  "CLAUDE.md",
+  "keybindings.json",
+  "skills",
+  "commands",
+  "agents",
+  "hooks",
+  "output-styles",
+];
+
+// Inside plugins/: what is installed, not what plugins have stored. `data/`
+// is each plugin's own saved state, `synced/` is tied to the signed-in
+// account, and the catalog cache is rebuilt on demand.
+export const SEED_PLUGIN_ITEMS = [
+  "installed_plugins.json",
+  "known_marketplaces.json",
+  "config.json",
+  "blocklist.json",
+  "cache",
+  "marketplaces",
+  "repos",
+];
+
+// User-scope MCP servers live in ~/.claude.json, OUTSIDE ~/.claude, next to
+// the account's identity, usage and caches. With CLAUDE_CONFIG_DIR set, Claude
+// Code reads <config dir>/.claude.json instead. Only the mcpServers entry is
+// taken from it.
+export const DEFAULT_USER_CONFIG_FILE = path.join(HOME, ".claude.json");
+
+function copyEntry(from, to) {
+  fs.mkdirSync(path.dirname(to), { recursive: true });
+  // -c asks for an APFS clone, which makes even a large plugins folder cost
+  // almost nothing; other filesystems fall back to a real copy.
+  try {
+    execFileSync("/bin/cp", ["-Rc", from, to], { stdio: "pipe" });
+  } catch {
+    execFileSync("/bin/cp", ["-R", from, to], { stdio: "pipe" });
   }
+}
+
+// Point paths that lead into the source profile at the new one instead.
+//
+// Plugin manifests and settings store absolute paths (a hook script, a
+// marketplace clone). Copied verbatim, the new profile would keep loading
+// those from the old profile's folder, and updating a plugin there would
+// quietly change it here too. A path is only rewritten when what it points to
+// exists in the new profile; otherwise it keeps working from where it was.
+export function rebasePaths(text, fromDir, toDir, { home = HOME, exists = () => true } = {}) {
+  const fromRel = path.relative(home, fromDir);
+  const toRel = path.relative(home, toDir);
+  const fromInHome = fromRel && !fromRel.startsWith("..") && !path.isAbsolute(fromRel);
+  const toInHome = toRel && !toRel.startsWith("..") && !path.isAbsolute(toRel);
+
+  const forms = [[`${fromDir}/`, `${toDir}/`]];
+  if (fromInHome) {
+    forms.push([`~/${fromRel}/`, toInHome ? `~/${toRel}/` : `${toDir}/`]);
+    forms.push([`$HOME/${fromRel}/`, toInHome ? `$HOME/${toRel}/` : `${toDir}/`]);
+    forms.push([`\${HOME}/${fromRel}/`, toInHome ? `\${HOME}/${toRel}/` : `${toDir}/`]);
+  }
+  let out = String(text);
+  for (const [from, to] of forms) {
+    const esc = from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // The path ends at whitespace or a quote, so a command line such as
+    // "bash ~/.claude/hooks/x.sh --flag" keeps its arguments.
+    out = out.replace(new RegExp(`${esc}([^\\s"'\`]*)`, "g"), (m, rel) =>
+      exists(rel) ? `${to}${rel}` : m
+    );
+  }
+  return out;
+}
+
+function mapStrings(value, fn) {
+  if (typeof value === "string") return fn(value);
+  if (Array.isArray(value)) return value.map((v) => mapStrings(v, fn));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, mapStrings(v, fn)]));
+  }
+  return value;
+}
+
+// Rewrite a JSON file's string values with rebasePaths. A file that does not
+// parse is left exactly as it is. Returns true if anything changed.
+export function rebaseJsonFile(file, fromDir, toDir) {
+  let before;
+  try {
+    before = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return false;
+  }
+  const exists = (rel) => fs.existsSync(path.join(toDir, rel));
+  const after = mapStrings(before, (s) => rebasePaths(s, fromDir, toDir, { exists }));
+  if (JSON.stringify(after) === JSON.stringify(before)) return false;
+  fs.writeFileSync(file, JSON.stringify(after, null, 2) + "\n", "utf8");
+  return true;
+}
+
+// For doctor: how many paths in a JSON file still lead into `fromDir`, split
+// into those the profile has its own copy of (safe to rebase) and those it
+// does not (still load from the other profile, and must stay that way).
+export function pathsIntoOtherProfile(file, fromDir, toDir) {
+  const result = { rebasable: 0, stuck: 0 };
+  let text;
+  try {
+    text = fs.readFileSync(file, "utf8");
+    JSON.parse(text);
+  } catch {
+    return result;
+  }
+  rebasePaths(text, fromDir, toDir, {
+    exists: (rel) => {
+      if (fs.existsSync(path.join(toDir, rel))) result.rebasable++;
+      else result.stuck++;
+      return false;
+    },
+  });
+  return result;
+}
+
+// Conversations a pre-v0.1.31 seed copied in: transcripts present in both
+// profiles under the same project and session ID. Session IDs are unique per
+// conversation, so a match can only have come from a copy.
+export function copiedTranscripts(profileDir, sourceDir) {
+  const list = (root) => {
+    const out = new Set();
+    const walk = (dir, rel) => {
+      let entries;
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const e of entries) {
+        const r = rel ? `${rel}/${e.name}` : e.name;
+        if (e.isDirectory()) walk(path.join(dir, e.name), r);
+        else if (e.name.endsWith(".jsonl")) out.add(r);
+      }
+    };
+    walk(path.join(root, "projects"), "");
+    return out;
+  };
+  const theirs = list(sourceDir);
+  let n = 0;
+  for (const r of list(profileDir)) if (theirs.has(r)) n++;
+  return n;
+}
+
+// Returns a summary: { items: [...copied names], plugins: bool, mcpServers: n }.
+export function seedConfigDir(fromDir, toDir, { userConfigFile = DEFAULT_USER_CONFIG_FILE } = {}) {
+  fs.mkdirSync(toDir, { recursive: true });
+  const summary = { items: [], plugins: false, mcpServers: 0 };
+
+  for (const item of SEED_ITEMS) {
+    const src = path.join(fromDir, item);
+    if (!fs.existsSync(src)) continue;
+    copyEntry(src, path.join(toDir, item));
+    summary.items.push(item);
+  }
+
+  const pluginsFrom = path.join(fromDir, "plugins");
+  if (fs.existsSync(pluginsFrom)) {
+    for (const item of SEED_PLUGIN_ITEMS) {
+      const src = path.join(pluginsFrom, item);
+      if (fs.existsSync(src)) copyEntry(src, path.join(toDir, "plugins", item));
+    }
+    for (const manifest of ["installed_plugins.json", "known_marketplaces.json"]) {
+      const f = path.join(toDir, "plugins", manifest);
+      if (fs.existsSync(f)) rebaseJsonFile(f, fromDir, toDir);
+    }
+    summary.plugins = true;
+  }
+
+  const settings = path.join(toDir, "settings.json");
+  if (fs.existsSync(settings)) rebaseJsonFile(settings, fromDir, toDir);
+
+  // MCP servers: the one entry of ~/.claude.json that is setup.
+  try {
+    const servers = JSON.parse(fs.readFileSync(userConfigFile, "utf8")).mcpServers;
+    if (servers && typeof servers === "object" && Object.keys(servers).length > 0) {
+      const file = path.join(toDir, ".claude.json");
+      fs.writeFileSync(file, JSON.stringify({ mcpServers: servers }, null, 2) + "\n", "utf8");
+      rebaseJsonFile(file, fromDir, toDir);
+      summary.mcpServers = Object.keys(servers).length;
+    }
+  } catch {
+    // No ~/.claude.json, or unreadable: nothing to carry over.
+  }
+  return summary;
 }
 
 // ---- Shell alias setup ---------------------------------------------------
@@ -174,9 +341,13 @@ export function setupCode({ name, configDir, aliasName, seedFromDefault, isolate
 
   const created = ensureConfigDir(configDir, { seedFromDefault });
   if (created) {
-    if (seedFromDefault) {
+    if (seedFromDefault && typeof created === "object") {
+      const parts = [...created.items];
+      if (created.plugins) parts.push("plugins");
+      if (created.mcpServers) parts.push(`${created.mcpServers} MCP server${created.mcpServers === 1 ? "" : "s"}`);
       ok(`Config folder created and seeded from ${pathStr(tildify(DEFAULT_CLAUDE_CONFIG_DIR))}.`);
-      ok("Existing skills, plugins, and MCP config carried over. Auth did not (it lives in Keychain).");
+      ok(parts.length ? `Carried over: ${parts.join(", ")}.` : "There was no setup to carry over.");
+      info("Not carried over: conversations, prompt history, sessions, caches, or sign-in.");
     } else {
       ok("Config folder created (empty).");
     }

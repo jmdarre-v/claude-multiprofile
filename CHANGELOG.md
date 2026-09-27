@@ -3,6 +3,64 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## 0.1.31 (2026-09-27)
+
+### Fixed
+
+- **Seeding a Code profile copied your conversations into it.** The seed
+  copied the whole of `~/.claude` and then deleted three credential
+  filenames, so it also copied the default account's conversation
+  transcripts (`projects/`), prompt history (`history.jsonl`), sessions and
+  shell snapshots into the new profile: exactly the cross-account bleed a
+  profile exists to prevent. On the machine this was found on, 34
+  conversations from a personal account were sitting in a work profile.
+  Pointed out in an outside review, which suggested the fix.
+
+  Seeding now works from an allowlist. It copies `settings.json`,
+  `CLAUDE.md`, `keybindings.json`, skills, commands, agents, hooks, output
+  styles and installed plugins, and nothing else. Anything not named stays
+  behind, including files Anthropic adds in future that the tool does not
+  know about. Plugin data and account-synced plugin state stay behind too.
+
+- **MCP servers never carried over, despite the README saying so.**
+  User-level MCP servers live in `~/.claude.json`, outside the folder the
+  seed copied. The seed now takes the `mcpServers` entry from that file and
+  nothing else from it, since the rest is the account's identity, usage and
+  caches.
+
+- **Seeded profiles kept loading plugins and hooks from the default
+  profile.** Plugin manifests and settings store absolute paths into
+  `~/.claude`, and the old seed copied them verbatim, so updating a plugin in
+  the default profile changed it in the seeded one too. Those paths are now
+  pointed at the new profile's own copies, and only where the copy exists.
+
+### Added
+
+- `doctor` reports what an older seed left in existing profiles. It counts
+  conversations copied from the default profile (matched by session ID,
+  which is unique per conversation) and says where they are. It never
+  deletes them: whether to keep them is your call. It also finds plugin and
+  hook paths still leading into the default profile, and `--fix` points them
+  at the profile's own copies wherever those exist, leaving the rest working
+  as they are.
+
+- CI now runs the test suite on macOS too. Launcher compilation, plist and
+  bundle handling and the launch helper's decisions are tested on macOS
+  only, so until now they only ever ran on a developer's machine. The macOS
+  job fails if any test skips.
+
+### Changed
+
+- The README opens with what the tool does and how to install it, and no
+  longer says profiles are "fully isolated". Each profile has its own login,
+  chats, settings, MCP servers, plugins and skills; it does not have a
+  sandboxed filesystem, which the README explains further down.
+- The `add` wizard describes seeding precisely, and its review screen now
+  shows the Dock colour and GitHub CLI choices before you confirm.
+- The walkthrough is updated to what the wizard prints today.
+- Removed a release tarball from v0.1.4 that had been committed to the
+  repository.
+
 ## 0.1.30 (2026-09-27)
 
 ### Changed

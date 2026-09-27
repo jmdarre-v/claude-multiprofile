@@ -43,7 +43,13 @@ import {
   findClaudeApp,
   DEFAULT_APPLET_BUNDLE_ID,
 } from "../desktop.js";
-import { DEFAULT_CLAUDE_CONFIG_DIR, ghTokenOverride } from "../code.js";
+import {
+  DEFAULT_CLAUDE_CONFIG_DIR,
+  ghTokenOverride,
+  copiedTranscripts,
+  pathsIntoOtherProfile,
+  rebaseJsonFile,
+} from "../code.js";
 import {
   clonePathFor,
   cloneState,
@@ -824,6 +830,71 @@ function checkAppClones(t, reg, fix) {
   }
 }
 
+// ---- Check: what an old seed left behind ------------------------------------
+//
+// Before v0.1.31, seeding a Code profile copied the whole of ~/.claude. Two
+// things from that are worth knowing about in existing profiles:
+//
+//   - Conversation transcripts from the default account. Reported, never
+//     removed: they are conversations, and whether to keep them is the user's
+//     call. Informational, so a profile that keeps them still reads clean.
+//   - Paths in plugin manifests and settings that still lead into ~/.claude,
+//     so the profile loads those plugins and hooks from the default profile
+//     and changes there reach it too. --fix points each one at the profile's
+//     own copy, only where that copy exists.
+
+function checkSeededProfiles(t, reg, fix) {
+  const code = reg.profiles.filter(
+    (p) => p.code && p.code.configDir && p.code.configDir !== DEFAULT_CLAUDE_CONFIG_DIR && fileExists(p.code.configDir)
+  );
+  if (code.length === 0 || !fileExists(DEFAULT_CLAUDE_CONFIG_DIR)) return;
+
+  step("Copied from your default Claude Code setup");
+  for (const p of code) {
+    const dir = p.code.configDir;
+    let clean = true;
+
+    const copied = copiedTranscripts(dir, DEFAULT_CLAUDE_CONFIG_DIR);
+    if (copied > 0) {
+      clean = false;
+      info(`${p.name}: ${copied} conversation${copied === 1 ? " was" : "s were"} copied here from your default profile when it was created.`);
+      info("  Seeding stopped copying conversations in v0.1.31. These are left as they are;");
+      info(`  to drop them, delete the matching transcripts under ${tildify(path.join(dir, "projects"))}.`);
+    }
+
+    const files = [
+      path.join(dir, "plugins", "installed_plugins.json"),
+      path.join(dir, "plugins", "known_marketplaces.json"),
+      path.join(dir, "settings.json"),
+    ].filter(fileExists);
+    let rebasable = 0;
+    let stuck = 0;
+    for (const f of files) {
+      const r = pathsIntoOtherProfile(f, DEFAULT_CLAUDE_CONFIG_DIR, dir);
+      rebasable += r.rebasable;
+      stuck += r.stuck;
+    }
+    if (rebasable > 0) {
+      clean = false;
+      warn(`${p.name}: ${rebasable} plugin or hook path${rebasable === 1 ? " leads" : "s lead"} into your default profile's folder.`);
+      info("  So it loads those from the default profile, and changes there reach it too.");
+      if (fix) {
+        for (const f of files) rebaseJsonFile(f, DEFAULT_CLAUDE_CONFIG_DIR, dir);
+        ok("  Repaired: pointed at this profile's own copies. Takes effect in new sessions.");
+      } else {
+        info(`  Repair with ${command("claude-multiprofile doctor --fix")}`);
+        t.warnings++;
+      }
+    }
+    if (stuck > 0) {
+      clean = false;
+      info(`${p.name}: ${stuck} path${stuck === 1 ? "" : "s"} still load${stuck === 1 ? "s" : ""} from your default profile, because this profile has no copy of ${stuck === 1 ? "it" : "them"}.`);
+      info("  Left alone, since pointing elsewhere would break them. Reinstalling that plugin here gives it its own copy.");
+    }
+    if (clean) ok(`${p.name}: nothing copied from the default profile.`);
+  }
+}
+
 // ---- Check: managed updates --------------------------------------------------
 //
 // Since v0.1.29 a profile's copy of Claude does not update itself. Its
@@ -1199,6 +1270,7 @@ export async function doctor(args = []) {
   checkManagedUpdates(t, reg, fix);
   checkDesktopLaunchPath(t, reg);
   checkGhIsolation(t, reg, fix);
+  checkSeededProfiles(t, reg, fix);
   checkDenyRules(t, reg, fix);
 
   // ---- Summary -------------------------------------------------------------

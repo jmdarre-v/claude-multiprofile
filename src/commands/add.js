@@ -583,8 +583,8 @@ async function askDesktopQuestions(name) {
 
   explain(`
     Claude Desktop stores everything (login, chats, settings, MCP servers)
-    in a single folder. By giving the new profile its own folder, we get
-    a fully isolated second account.
+    in a single folder. Giving the new profile its own folder gives it its
+    own login, chats and settings, separate from your existing Claude.
 
     We will also create a real macOS .app launcher for this profile so you
     can put it on your Dock and launch it like any other app.
@@ -682,8 +682,8 @@ async function askDesktopQuestions(name) {
     default: true,
   });
 
-  // Per-profile Dock colour (issue #2). Opt-in: choosing none keeps exactly
-  // today's behaviour, launching the shared /Applications/Claude.app.
+  // Per-profile Dock colour (issue #2). Opt-in. Every Desktop profile gets
+  // its own copy of Claude.app either way (v0.1.23); the colour only tints it.
   explain(`
     Claude Desktop's Dock tile always shows the standard Claude icon, even
     when you customise the launcher, because the running window belongs to
@@ -777,17 +777,17 @@ async function askCodeQuestions(name) {
   let seedFromDefault = false;
   if (fileExists(DEFAULT_CLAUDE_CONFIG_DIR)) {
     explain(`
-      You already have a ~/.claude config from your existing Claude Code
-      install. We can copy its contents into the new profile's folder so
-      that any skills, plugins, MCP servers, or slash commands you've set
-      up come along for the ride.
+      You already have a Claude Code setup in ~/.claude. We can copy your
+      setup into the new profile so you don't redo it: settings, CLAUDE.md,
+      skills, slash commands, agents, hooks, plugins, and MCP servers.
 
-      Authentication does NOT carry over. Claude Code stores its login in
-      macOS Keychain under a key derived from CLAUDE_CONFIG_DIR, which is
-      different for the new profile. You'll sign in fresh on first launch.
+      Nothing from USING that account comes along: no conversations, no
+      prompt history, no sessions, no caches. Sign-in does not carry over
+      either; Claude Code keeps it in the macOS Keychain under a key tied to
+      the config folder, so you'll sign in fresh on first launch.
     `);
     seedFromDefault = await confirm({
-      message: "Copy your existing ~/.claude into the new profile? (recommended)",
+      message: "Copy your Claude Code setup into the new profile? (recommended)",
       default: true,
     });
   }
@@ -834,17 +834,15 @@ function printPlan({ name, desktopConfig, codeConfig }) {
     console.log("  Claude Desktop:");
     console.log(`    Data folder: ${pathStr(tildify(desktopConfig.dataDir))}`);
     console.log(`    Launcher app: ${pathStr(tildify(desktopConfig.appPath))}`);
-    console.log(
-      `    Apply Claude icon: ${desktopConfig.applyIcon ? "yes" : "no"}\n`
-    );
+    console.log(`    Apply Claude icon: ${desktopConfig.applyIcon ? "yes" : "no"}`);
+    console.log(`    Dock colour: ${desktopConfig.color || "none"}\n`);
   }
   if (codeConfig) {
     console.log("  Claude Code:");
     console.log(`    Config folder: ${pathStr(tildify(codeConfig.configDir))}`);
     console.log(`    Shell alias: ${pathStr(codeConfig.aliasName)}`);
-    console.log(
-      `    Seed from existing ~/.claude: ${codeConfig.seedFromDefault ? "yes" : "no"}\n`
-    );
+    console.log(`    Copy Claude Code setup: ${codeConfig.seedFromDefault ? "yes" : "no"}`);
+    console.log(`    Own GitHub CLI login: ${codeConfig.isolateGh ? "yes" : "no"}\n`);
   }
 }
 
@@ -883,9 +881,10 @@ function printNextSteps({ name, desktopResult, codeResult }) {
       To keep it in your Dock, drag the launcher itself from ~/Applications.
 
       Do NOT drag the Claude window's tile down while it is running. That
-      tile belongs to Claude itself rather than to this profile, so pinning
-      it would launch the shared Claude next time, not this account. It is
-      the usual reason a profile icon "stops working" and has to be re-pinned.
+      tile is this profile's copy of Claude, not its launcher, so clicking it
+      later starts the copy without its profile, on your default account.
+      Clicking the launcher then offers to fix it, but pinning the launcher
+      avoids the problem altogether.
     `);
     console.log("");
   }

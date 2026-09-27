@@ -1528,3 +1528,108 @@ test("upgrade installArgs: the exact version it looked up, asked of the registry
   assert.ok(!a.some((x) => x.endsWith("@latest")));
   assert.ok(a.includes("--prefer-online"));
 });
+
+// ---------------------------------------------------------------------------
+// code.js - seeding a new Code profile from an allowlist
+// ---------------------------------------------------------------------------
+//
+// Seeding used to copy all of ~/.claude and delete three credential names.
+// On a real machine that put 34 of the default account's conversations into
+// a work profile. What must NEVER arrive matters as much as what should.
+
+function fakeClaudeHome(root) {
+  const src = path.join(root, "home", ".claude");
+  const w = (rel, body) => {
+    fs.mkdirSync(path.dirname(path.join(src, rel)), { recursive: true });
+    fs.writeFileSync(path.join(src, rel), body);
+  };
+  w("settings.json", JSON.stringify({ hooks: { Stop: [{ command: `node "${src}/hooks/h.mjs" --x` }] }, statusLine: `${src}/not-copied.sh` }));
+  w("CLAUDE.md", "# mine");
+  w("skills/a/SKILL.md", "skill");
+  w("hooks/h.mjs", "hook");
+  w("plugins/installed_plugins.json", JSON.stringify({ plugins: { p: [{ installPath: `${src}/plugins/cache/p/1.0.0` }] } }));
+  w("plugins/cache/p/1.0.0/plugin.json", "{}");
+  w("plugins/data/p/state.json", "{}");
+  w("plugins/synced/x.json", "{}");
+  // Using the account: none of this may arrive.
+  w("projects/-Users-x-code/11111111-aaaa.jsonl", "{\"conversation\":true}");
+  w("history.jsonl", "{\"prompt\":\"secret plans\"}");
+  w("sessions/s.json", "{}");
+  w("shell-snapshots/snap.sh", "export X=1");
+  w("file-history/f", "x");
+  w(".credentials.json", "{}");
+  w("session-token.json", "{\"a future credential we do not know about\":1}");
+  const userCfg = path.join(root, "home", ".claude.json");
+  fs.writeFileSync(userCfg, JSON.stringify({ oauthAccount: { emailAddress: "me@example.com" }, userID: "u", mcpServers: { fs: { command: "npx" } } }));
+  return { src, userCfg };
+}
+
+test("seedConfigDir: copies setup, never conversations, history, sessions or credentials", async () => {
+  const { seedConfigDir } = await import("../src/code.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-seed-"));
+  const { src, userCfg } = fakeClaudeHome(root);
+  const dst = path.join(root, "home", ".claude-work");
+
+  const s = seedConfigDir(src, dst, { userConfigFile: userCfg });
+  assert.deepEqual(s.items.sort(), ["CLAUDE.md", "hooks", "settings.json", "skills"]);
+  assert.equal(s.plugins, true);
+  assert.equal(s.mcpServers, 1);
+
+  for (const never of ["projects", "history.jsonl", "sessions", "shell-snapshots", "file-history",
+    ".credentials.json", "session-token.json", "plugins/data", "plugins/synced"]) {
+    assert.equal(fs.existsSync(path.join(dst, never)), false, `${never} must not be copied`);
+  }
+  // Only mcpServers leaves ~/.claude.json: no identity, no account data.
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(dst, ".claude.json"), "utf8"))), ["mcpServers"]);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("seedConfigDir: paths into the old profile follow the copy, and only where the copy exists", async () => {
+  const { seedConfigDir } = await import("../src/code.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-seed-"));
+  const { src, userCfg } = fakeClaudeHome(root);
+  const dst = path.join(root, "home", ".claude-work");
+  seedConfigDir(src, dst, { userConfigFile: userCfg });
+
+  const plugins = JSON.parse(fs.readFileSync(path.join(dst, "plugins", "installed_plugins.json"), "utf8"));
+  assert.equal(plugins.plugins.p[0].installPath, `${dst}/plugins/cache/p/1.0.0`, "plugin loads from its own copy");
+
+  const settings = JSON.parse(fs.readFileSync(path.join(dst, "settings.json"), "utf8"));
+  assert.equal(settings.hooks.Stop[0].command, `node "${dst}/hooks/h.mjs" --x`, "arguments and quotes survive");
+  // Not copied, so rewriting it would break it: it keeps pointing at the source.
+  assert.equal(settings.statusLine, `${src}/not-copied.sh`);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("rebasePaths: tilde, $HOME and absolute forms, and never a longer sibling name", async () => {
+  const { rebasePaths } = await import("../src/code.js");
+  const o = { home: "/Users/x", exists: () => true };
+  const from = "/Users/x/.claude";
+  const to = "/Users/x/.claude-work";
+  assert.equal(rebasePaths("bash ~/.claude/hooks/a.sh", from, to, o), "bash ~/.claude-work/hooks/a.sh");
+  assert.equal(rebasePaths("$HOME/.claude/hooks/a.sh", from, to, o), "$HOME/.claude-work/hooks/a.sh");
+  assert.equal(rebasePaths("${HOME}/.claude/x", from, to, o), "${HOME}/.claude-work/x");
+  assert.equal(rebasePaths("/Users/x/.claude/x y", from, to, o), "/Users/x/.claude-work/x y");
+  // ~/.claude-ipsy/ is another profile, not a path under ~/.claude/.
+  assert.equal(rebasePaths("/Users/x/.claude-ipsy/x", from, to, o), "/Users/x/.claude-ipsy/x");
+  assert.equal(rebasePaths("~/.claude/x", from, to, { ...o, exists: () => false }), "~/.claude/x");
+});
+
+test("copiedTranscripts and pathsIntoOtherProfile: what doctor reports about old seeds", async () => {
+  const { copiedTranscripts, pathsIntoOtherProfile } = await import("../src/code.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-seed-"));
+  const a = path.join(root, ".claude");
+  const b = path.join(root, ".claude-work");
+  const w = (p, body = "{}") => { fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, body); };
+  w(path.join(a, "projects/p1/s1.jsonl"));
+  w(path.join(a, "projects/p1/s2.jsonl"));
+  w(path.join(b, "projects/p1/s1.jsonl")); // copied by an old seed
+  w(path.join(b, "projects/p2/s9.jsonl")); // its own
+  assert.equal(copiedTranscripts(b, a), 1);
+
+  w(path.join(b, "plugins/cache/have/x"));
+  const manifest = path.join(b, "plugins/installed_plugins.json");
+  w(manifest, JSON.stringify({ x: `${a}/plugins/cache/have`, y: `${a}/plugins/cache/missing` }));
+  assert.deepEqual(pathsIntoOtherProfile(manifest, a, b), { rebasable: 1, stuck: 1 });
+  fs.rmSync(root, { recursive: true, force: true });
+});

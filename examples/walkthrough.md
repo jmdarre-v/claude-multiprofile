@@ -1,10 +1,10 @@
-# Walkthrough: setting up an WORK work profile alongside personal
+# Walkthrough: setting up a work profile alongside personal
 
-This is a worked example showing what the wizard actually looks like end to end. The user's setup before starting:
+This is a worked example showing what the wizard looks like end to end, as of v0.1.31. The user's setup before starting:
 
 - Claude Desktop installed and signed into a personal account
 - Claude Code installed via npm, signed into the same personal account
-- About to add an WORK work profile that's fully separate
+- About to add a work profile, signed into a separate work account
 
 ## Step 1: Run the wizard
 
@@ -29,7 +29,7 @@ to it.
   Claude Desktop only (the GUI chat app)
   Claude Code only (the terminal CLI)
 
-? Profile name (e.g. work, work, client-acme): work
+? Profile name (e.g. work, personal, client-acme): work
 ```
 
 ## Step 2: Desktop questions
@@ -38,32 +38,32 @@ to it.
 → Claude Desktop configuration
 
 Claude Desktop stores everything (login, chats, settings, MCP servers)
-in a single folder. By giving the new profile its own folder, we get
-a fully isolated second account.
+in a single folder. Giving the new profile its own folder gives it its
+own login, chats and settings, separate from your existing Claude.
 
 We will also create a real macOS .app launcher for this profile so you
 can put it on your Dock and launch it like any other app.
 
 ℹ Found Claude Desktop at /Applications/Claude.app.
 
-Where should the new profile's data live? The default puts it next to
-your current Claude data, both inside ~/Library/Application Support/.
-The folder will be created if it doesn't exist; nothing inside your
-existing ~/Library/Application Support/Claude folder will be touched.
-
 ? Data folder for this profile: (~/Library/Application Support/Claude-WORK) ↵
-
-We'll generate a small .app bundle that, when double-clicked, launches
-Claude with the right --user-data-dir flag for this profile. You can
-drag the .app to your Dock for one-click access.
-
-The default location is ~/Applications because it doesn't require
-administrator permission to write to. You can also use /Applications,
-but that might prompt for your password.
-
 ? Where to save the launcher .app: (~/Applications/Claude WORK.app) ↵
 ? Copy the Claude icon onto the launcher? (recommended) (Y/n) ↵
+
+Claude Desktop's Dock tile always shows the standard Claude icon, even
+when you customise the launcher, because the running window belongs to
+Claude itself rather than to the launcher.
+
+Giving this profile a colour works around that: it launches a private
+copy of Claude.app tinted that colour, so the running window's Dock tile
+is finally distinguishable. The copy is an APFS clone, which costs a few
+megabytes rather than a few hundred, and Anthropic's signature stays
+intact so your login keeps working.
+
+? Dock colour for this profile: teal
 ```
+
+Explanations the wizard prints before the data folder and launcher questions are trimmed here for length.
 
 ## Step 3: Code questions
 
@@ -77,17 +77,20 @@ shell alias so you can launch it with a single command.
 ? Config folder for this profile: (~/.claude-work) ↵
 ? Shell alias to launch this profile: (claude-work) ↵
 
-You already have a ~/.claude config from your existing Claude Code
-install. We can copy its contents into the new profile's folder so
-that any skills, plugins, MCP servers, or slash commands you've set
-up come along for the ride.
+You already have a Claude Code setup in ~/.claude. We can copy your
+setup into the new profile so you don't redo it: settings, CLAUDE.md,
+skills, slash commands, agents, hooks, plugins, and MCP servers.
 
-Authentication does NOT carry over. Claude Code stores its login in
-macOS Keychain under a key derived from CLAUDE_CONFIG_DIR, which is
-different for the new profile. You'll sign in fresh on first launch.
+Nothing from USING that account comes along: no conversations, no
+prompt history, no sessions, no caches. Sign-in does not carry over
+either; Claude Code keeps it in the macOS Keychain under a key tied to
+the config folder, so you'll sign in fresh on first launch.
 
-? Copy your existing ~/.claude into the new profile? (recommended) (Y/n) ↵
+? Copy your Claude Code setup into the new profile? (recommended) (Y/n) ↵
+? Give this profile its own GitHub CLI login? (y/N) ↵
 ```
+
+The GitHub CLI question only appears when `gh` is installed.
 
 ## Step 4: Review and confirm
 
@@ -100,11 +103,13 @@ different for the new profile. You'll sign in fresh on first launch.
     Data folder: ~/Library/Application Support/Claude-WORK
     Launcher app: ~/Applications/Claude WORK.app
     Apply Claude icon: yes
+    Dock colour: teal
 
   Claude Code:
     Config folder: ~/.claude-work
     Shell alias: claude-work
-    Seed from existing ~/.claude: yes
+    Copy Claude Code setup: yes
+    Own GitHub CLI login: no
 
 ? Apply this configuration? (Y/n) ↵
 ```
@@ -116,19 +121,26 @@ different for the new profile. You'll sign in fresh on first launch.
 ℹ Data folder: ~/Library/Application Support/Claude-WORK
 ℹ Launcher app: ~/Applications/Claude WORK.app
 ℹ Claude.app source: /Applications/Claude.app
+ℹ Code config for Desktop-spawned Claude Code: ~/.claude-work
 ✓ Data folder ready.
+✓ Claude clone ready (teal).
 ✓ Launcher .app compiled.
+✓ Updates managed by the launcher: the copy is refreshed when your main Claude updates.
 ✓ Claude icon applied to launcher.
+✓ Launcher tinted to match.
 
 → Creating Claude Code profile "work"
 ℹ Config folder: ~/.claude-work
 ℹ Shell alias: claude-work
 ✓ Config folder created and seeded from ~/.claude.
-✓ Existing skills, plugins, and MCP config carried over. Auth did not (it lives in Keychain).
+✓ Carried over: settings.json, CLAUDE.md, skills, commands, plugins, 1 MCP server.
+ℹ Not carried over: conversations, prompt history, sessions, caches, or sign-in.
 ✓ Alias "claude-work" added to ~/.zshrc (shell: zsh).
 
 ✓ Profile "work" is ready.
 ```
+
+What "Carried over" lists depends on what your own `~/.claude` contains.
 
 ## Step 6: Next-steps guidance
 
@@ -156,6 +168,14 @@ for this one.
 ℹ First-launch command (only needed if you didn't drag the .app yet):
   open "~/Applications/Claude WORK.app"
 
+To keep it in your Dock, drag the launcher itself from ~/Applications.
+
+Do NOT drag the Claude window's tile down while it is running. That
+tile is this profile's copy of Claude, not its launcher, so clicking it
+later starts the copy without its profile, on your default account.
+Clicking the launcher then offers to fix it, but pinning the launcher
+avoids the problem altogether.
+
 → Next: activate the shell alias
 
 The alias was added to your shell config but won't be available in
@@ -182,28 +202,27 @@ keep you signed in.
 
 ```
 $ claude-multiprofile list
-
-──────────────────────────────
-  Configured Claude profiles
-──────────────────────────────
+...
+  Additional profiles managed by claude-multiprofile:
 
   work (both)
     Desktop data:    ~/Library/Application Support/Claude-WORK
     Desktop launcher: ~/Applications/Claude WORK.app
     Code config:     ~/.claude-work
     Code alias:      claude-work
-    Created:         2026-04-26
+    Created:         2026-09-27
+    To launch:
+      claude-work  (Claude Code, in a terminal)
+      open "~/Applications/Claude WORK.app"  (Claude Desktop)
 
 ℹ Registry file: ~/.config/claude-multiprofile/profiles.json
 ```
 
+`list` and `status` also show your default Claude install and the `claude` binary every profile shares; those sections are trimmed here.
+
 ```
 $ claude-multiprofile status
-
-──────────────────────────
-  Claude profiles status
-──────────────────────────
-
+...
   work (both)
     ✓ Desktop data folder: ~/Library/Application Support/Claude-WORK
     ✓ Launcher app: ~/Applications/Claude WORK.app
@@ -211,6 +230,9 @@ $ claude-multiprofile status
     ✓ Code config folder: ~/.claude-work
     ✓ Shell alias "claude-work" in ~/.zshrc
 ✓     All checks passed.
+    To launch:
+      claude-work  (Claude Code, in a terminal)
+      open "~/Applications/Claude WORK.app"  (Claude Desktop)
 
 ℹ Registry: ~/.config/claude-multiprofile/profiles.json
 ℹ Shell: zsh (~/.zshrc)
@@ -219,9 +241,9 @@ $ claude-multiprofile status
 That's it. From here:
 
 1. Quit the personal Claude app (Cmd+Q)
-2. Open `~/Applications/Claude WORK.app`, sign in with the WORK account
+2. Open `~/Applications/Claude WORK.app`, sign in with the work account
 3. Cmd+Q
-4. Now you can run both at once: personal from Dock as before, WORK from the new launcher
+4. Now you can run both at once: personal from the Dock as before, work from the new launcher
 5. In a terminal, `source ~/.zshrc`, then `claude-work`, then `/login` inside the REPL
 
-The whole sequence takes maybe two minutes including the sign-in flows.
+The whole sequence takes about two minutes including the sign-in flows. From then on, the work profile picks up new Claude versions by itself the first time you open it after your main Claude updates.
