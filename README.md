@@ -473,23 +473,35 @@ If you're switching profiles to spread usage across accounts, the workflow that 
 
 ## Security notes
 
-The tool reads and writes the following on your machine:
+To report a vulnerability, see [SECURITY.md](SECURITY.md). Please don't open a public issue for it.
 
-- `~/Library/Application Support/Claude-{Name}/` (creates new folders only)
-- `~/Applications/` (creates new .app bundles only)
-- `~/.claude-{name}/` (creates new folders only)
-- `~/.claude-{name}/settings.json` (adds cross-profile `permissions.deny` rules; tracks only the rules it wrote and never removes yours)
-- `~/.zshrc`, `~/.bash_profile`, or `~/.config/fish/config.fish` (adds a delimited managed block; never touches lines outside the markers)
-- `~/.config/claude-multiprofile/profiles.json` (the registry)
+**What the tool writes:**
 
-It does not touch:
+- `~/Library/Application Support/Claude-{NAME}/`: each Desktop profile's data folder, created new.
+- `~/Library/Application Support/Claude-{NAME}-3p/`: the setting that stops that profile's copy of Claude updating itself. Only written when the folder does not exist, because Claude also keeps third-party inference setups there; never edited if the tool did not create it.
+- `~/Library/Application Support/claude-multiprofile/`: each profile's copy of Claude.app (`apps/`, APFS clones carrying the colour as Finder metadata), the launch helper (`bin/launch.js`) and its log (`launch.log`).
+- `~/Applications/Claude {NAME}.app`: each profile's launcher, created new, and registered with macOS LaunchServices.
+- `~/.claude-{name}/`: each Code profile's config folder. When you choose to seed it, the tool copies setup from `~/.claude` from an allowlist, and the `mcpServers` entry of `~/.claude.json`, and points paths in plugin manifests and settings at the profile's own copies. It adds cross-profile `permissions.deny` rules to `settings.json`, tracking only the rules it wrote and never removing yours. With GitHub CLI isolation on, `gh/` inside it holds that profile's `gh` login.
+- `~/.zshrc`, `~/.bash_profile` or `~/.config/fish/config.fish`: a delimited managed block of aliases. Lines outside the markers are never touched.
+- `~/.config/claude-multiprofile/`: the registry (`profiles.json`, with a `.bak` of the last good version) and `state.json`, which records which version's fixes have been applied.
 
-- Your default Claude data folder (`~/Library/Application Support/Claude/`)
-- Your default `~/.claude` (except to read it for seeding, never to write)
-- macOS Keychain (Claude Code's auth lives there but the tool never reads or writes Keychain entries)
-- Anything else on your filesystem
+**What it only reads:**
 
-The single npm dependency is `@inquirer/prompts`, the standard interactive-prompt library used by npm itself and most modern CLI tools.
+- Your default `~/.claude`, when seeding; and for `doctor`, the names of its conversation files (to spot ones an older seed copied), never their contents.
+- `~/.claude.json`, when seeding: only the `mcpServers` entry is used.
+- Each Desktop data folder's `config.json`, for the account ID `doctor` uses to catch two profiles signed in as the same account.
+- The running process list and the Dock's list of pinned apps, for `doctor`'s check that each profile was started through its launcher.
+- `/Applications/Claude.app`, to copy it and compare versions.
+
+**What it never does:**
+
+- Read or write the macOS Keychain, where Claude Code keeps its sign-in.
+- Write to your default Claude: `~/Library/Application Support/Claude/`, `~/.claude` or `~/.claude.json`.
+- Delete conversations unless you ask it to. `remove` offers to delete a profile's folders, each behind its own confirmation that defaults to no. `doctor` only reports conversations an older seed copied into a profile and leaves the decision to you.
+- Quit a Claude window without asking. The launch helper only quits a profile's window that is open on the wrong account, after you confirm in a dialog.
+- Contact anything except the npm registry, for `upgrade` and `doctor`'s version check.
+
+The one direct npm dependency is `@inquirer/prompts`, the interactive-prompt library, which brings 31 more packages with it. Everything else uses tools that ship with macOS.
 
 ## Contributing
 
