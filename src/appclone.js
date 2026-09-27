@@ -184,6 +184,49 @@ export function cloneState(clonePath, claudeAppPath) {
   return compareCloneVersions(appVersion(clonePath), appVersion(claudeAppPath));
 }
 
+// ---- Is a copy open? -------------------------------------------------------
+//
+// Rebuilding deletes the copy and writes a new one, and deleting an app while
+// it runs can crash it. Rename moves the data folder, which a running Claude
+// would keep writing to. So anything destructive asks first.
+
+export function parseRunningCopies(psOutput, copyPath) {
+  const needle = path.join(copyPath, "Contents", "MacOS") + path.sep;
+  const found = [];
+  for (const line of psOutput.split("\n")) {
+    // Renderer/GPU helpers live in their own nested bundles under
+    // Contents/Frameworks, never Contents/MacOS, so the needle already excludes
+    // them. Matching on the word "Helper" as well would look like belt and
+    // braces but would skip a profile actually named "Helper", and a profile
+    // this check stays silent about is the exact failure it exists to catch.
+    if (!line.includes(needle)) continue;
+    const match = line.trim().match(/^(\d+)\s+(.*)$/);
+    if (match) found.push({ pid: match[1], command: match[2] });
+  }
+  return found;
+}
+
+export function psSnapshot() {
+  try {
+    // -ww: never truncate. A long command line cut short would hide the
+    // --user-data-dir at its end, which is the thing being looked for.
+    return execFileSync("ps", ["-axww", "-o", "pid=,command="], {
+      encoding: "utf8",
+      maxBuffer: 16 * 1024 * 1024,
+    });
+  } catch {
+    return "";
+  }
+}
+
+export function runningCopies(copyPath, psOutput = psSnapshot()) {
+  return parseRunningCopies(psOutput, copyPath);
+}
+
+export function cloneIsRunning(clonePath, psOutput = psSnapshot()) {
+  return runningCopies(clonePath, psOutput).length > 0;
+}
+
 // True when the copy needs building: missing, or older than its source.
 export function cloneIsStale(clonePath, claudeAppPath) {
   const state = cloneState(clonePath, claudeAppPath);
@@ -209,7 +252,11 @@ export function ensureColoredClone({ name, claudeAppPath, color, force = false }
   }
 
   const clonePath = clonePathFor(name);
-  if (force || cloneIsStale(clonePath, claudeAppPath)) {
+  // Never rebuild a copy that is open: the delete below would pull the app
+  // out from under it. Keeping the current copy is always safe, and the
+  // launcher rebuilds it on the first click after it is quit.
+  const rebuild = (force || cloneIsStale(clonePath, claudeAppPath)) && !cloneIsRunning(clonePath);
+  if (rebuild) {
     fs.mkdirSync(CLONE_PARENT, { recursive: true });
     if (fileExists(clonePath)) fs.rmSync(clonePath, { recursive: true, force: true });
     // -c asks for an APFS clone; fall back to a real copy on other filesystems.

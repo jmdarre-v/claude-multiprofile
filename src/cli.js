@@ -15,6 +15,7 @@ import { list } from "./commands/list.js";
 import { remove } from "./commands/remove.js";
 import { rename } from "./commands/rename.js";
 import { repair } from "./commands/repair.js";
+import { selfUpdate } from "./commands/selfupdate.js";
 import { status } from "./commands/status.js";
 import { upgrade } from "./commands/upgrade.js";
 import { err } from "./util.js";
@@ -48,6 +49,9 @@ COMMANDS
                          (interactive if no name given; fixes Dock icons that
                          stop responding to double-click)
   remove [name]          Remove a profile (interactive if no name given)
+  self-update [name] [on|off]
+                         Whether a profile's copy of Claude updates itself
+                         (off by default: its launcher keeps it current)
   upgrade                Upgrade claude-multiprofile to the latest version on npm
   help                   Show this help
   version                Show the installed version
@@ -84,11 +88,12 @@ async function pickCommand() {
       { name: "rename       Rename a profile and move its folders/alias", value: "rename" },
       { name: "repair       Re-register a profile launcher with macOS", value: "repair" },
       { name: "remove       Remove a profile", value: "remove" },
+      { name: "self-update  Show or change how each profile updates", value: "self-update" },
       { name: "upgrade      Upgrade claude-multiprofile to the latest version", value: "upgrade" },
       { name: "help         Show full help text", value: "help" },
       { name: "exit", value: "exit" },
     ],
-    pageSize: 12,
+    pageSize: 13,
   });
 }
 
@@ -127,7 +132,7 @@ export async function run(argv) {
     rest = [];
   }
 
-  const handlers = { add, list, status, doctor, extensions, rename, repair, remove, upgrade };
+  const handlers = { add, list, status, doctor, extensions, rename, repair, remove, upgrade, "self-update": selfUpdate };
   const handler = handlers[cmd];
   if (!handler) {
     err(`Unknown command: ${cmd}`);

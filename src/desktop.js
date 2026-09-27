@@ -40,7 +40,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { ensureColoredClone, applyColor } from "./appclone.js";
+import { ensureColoredClone, applyColor, clonePathFor, psSnapshot } from "./appclone.js";
+import { installHelper, helperSpecFor } from "./launchhelper.js";
+import { blockUpdates } from "./updates.js";
 import {
   HOME,
   pathStr,
@@ -109,7 +111,7 @@ export function ensureDataDir(dataDir) {
 
 // ---- .app bundle generation ----------------------------------------
 
-export function buildLaunchAppleScript(dataDir, claudeAppPath, codeConfigDir, ghConfigDir, dedicatedBundle = false) {
+export function buildLaunchAppleScript(dataDir, claudeAppPath, codeConfigDir, ghConfigDir, dedicatedBundle = false, helper = null) {
   // The `open -n` flag forces a new instance even when Claude is already
   // running. Without -n, macOS would route the request to the existing
   // Claude window and ignore our --user-data-dir argument entirely.
@@ -164,12 +166,42 @@ export function buildLaunchAppleScript(dataDir, claudeAppPath, codeConfigDir, gh
   // existing window if it is. Dropping `-n` there is what stops every click
   // on the Dock icon from stacking up another copy.
   const newInstance = dedicatedBundle ? "" : "-n ";
-  const cmd =
+  const openLine =
     `open ${newInstance}-a ${shellQuote(claudeAppPath)} ` +
     (codeConfigDir ? `--env ${shellQuote(`CLAUDE_CONFIG_DIR=${codeConfigDir}`)} ` : "") +
     (ghConfigDir ? `--env ${shellQuote(`GH_CONFIG_DIR=${ghConfigDir}`)} ` : "") +
     `--args --user-data-dir=${shellQuote(dataDir)} > /dev/null 2>&1 &`;
+
+  // A profile with its own copy routes through the launch helper
+  // (src/launchhelper.js), which keeps the copy current and catches it
+  // running on the wrong account before opening it. The helper gets the same
+  // open arguments as an array. If the helper file is missing, the launcher
+  // runs exactly the line above, so the helper can never be why Claude fails
+  // to open.
+  if (!dedicatedBundle || !helper) return `do shell script ${appleScriptString(openLine)}`;
+
+  const openArgs = ["-a", claudeAppPath];
+  if (codeConfigDir) openArgs.push("--env", `CLAUDE_CONFIG_DIR=${codeConfigDir}`);
+  if (ghConfigDir) openArgs.push("--env", `GH_CONFIG_DIR=${ghConfigDir}`);
+  openArgs.push("--args", `--user-data-dir=${dataDir}`);
+  const helperArgs = [claudeAppPath, helper.source, helper.hue || "", dataDir, helper.label, ...openArgs];
+  const cmd =
+    `if [ -f ${shellQuote(helper.path)} ]; then ` +
+    `/usr/bin/osascript -l JavaScript ${shellQuote(helper.path)} ${helperArgs.map(shellQuote).join(" ")} > /dev/null 2>&1 & ` +
+    `else ${openLine} fi`;
   return `do shell script ${appleScriptString(cmd)}`;
+}
+
+// Whether a launcher goes through the launch helper. Read back from the
+// compiled script, like the env checks below, because the bundle is the only
+// record of what a launcher actually does.
+// Matched on a fixed suffix rather than the full path: the path sits inside
+// two escaping layers, and a home folder with an apostrophe would not match
+// itself verbatim.
+export function launcherUsesHelper(appPath) {
+  const src = readLauncherScript(appPath);
+  if (src === null) return undefined;
+  return src.includes("claude-multiprofile/bin/launch.js");
 }
 
 // Wrap a value in shell single quotes, escaping embedded apostrophes the POSIX
@@ -412,11 +444,71 @@ export function stripQuarantine(appPath) {
   }
 }
 
-export function compileApp({ name, dataDir, appPath, claudeAppPath, codeConfigDir, ghConfigDir, dedicatedBundle = false }) {
+// Whether any running Claude is using this data folder. Catches a profile
+// open through its own copy AND one opened on the shared Claude.app (profiles
+// created before v0.1.23 launch that way).
+export function dataDirInUse(dataDir, psOutput = psSnapshot()) {
+  const flag = ` --user-data-dir=${dataDir}`;
+  return psOutput.split("\n").some((line) => {
+    const i = line.indexOf(flag);
+    if (i < 0) return false;
+    // Followed by a space or the end, so Claude-WORK never matches Claude-WORK2.
+    const next = line.charAt(i + flag.length);
+    return next === "" || next === " ";
+  });
+}
+
+// Where a profile's launcher should point, for every place that rebuilds one.
+//
+// Since v0.1.23 a Desktop profile launches its own copy of Claude.app. Several
+// rebuild paths (rename, linking a Code half, enabling gh isolation, doctor's
+// env repairs) still passed the shared /Applications/Claude.app, so repairing
+// one thing quietly pointed the launcher back at the shared app: no colour on
+// the running window, a new window on every click, and no launch helper.
+// Deciding it here, from the copy actually on disk, keeps them all agreeing.
+export function launchTargetFor(name, desktop) {
+  if (fileExists(clonePathFor(name))) {
+    return {
+      claudeAppPath: clonePathFor(name),
+      dedicatedBundle: true,
+      sourceAppPath: desktop.claudeAppPath,
+      color: desktop.color || null,
+    };
+  }
+  return { claudeAppPath: desktop.claudeAppPath, dedicatedBundle: false };
+}
+
+export function compileApp({
+  name,
+  dataDir,
+  appPath,
+  claudeAppPath,
+  codeConfigDir,
+  ghConfigDir,
+  dedicatedBundle = false,
+  sourceAppPath = null,
+  color = null,
+}) {
   // We write the AppleScript to a temp file then run `osacompile` to turn
   // it into a real .app bundle. osacompile is part of macOS, no install
   // needed.
-  const script = buildLaunchAppleScript(dataDir, claudeAppPath, codeConfigDir, ghConfigDir, dedicatedBundle);
+  //
+  // `sourceAppPath` is the Claude.app the profile's copy is built from. With
+  // it, and a dedicated copy, the launcher goes through the launch helper,
+  // which is installed here so a new launcher never points at a helper that
+  // is not on disk yet.
+  // A launcher written over the app it opens would delete that app and then
+  // open itself. macOS disks ignore case, so compare that way.
+  if (path.resolve(appPath).toLowerCase() === path.resolve(claudeAppPath).toLowerCase()) {
+    throw new Error(`the launcher path ${appPath} is the same as the app it opens`);
+  }
+
+  let helper = null;
+  if (dedicatedBundle && sourceAppPath) {
+    installHelper();
+    helper = helperSpecFor({ sourceAppPath, color, appPath });
+  }
+  const script = buildLaunchAppleScript(dataDir, claudeAppPath, codeConfigDir, ghConfigDir, dedicatedBundle, helper);
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "cp-"));
   const scriptPath = path.join(tmpDir, "launcher.applescript");
   fs.writeFileSync(scriptPath, script, "utf8");
@@ -575,8 +667,28 @@ export function setupDesktop({
     codeConfigDir,
     ghConfigDir,
     dedicatedBundle: Boolean(clonePath),
+    sourceAppPath: claudeAppPath,
+    color,
   });
   ok("Launcher .app compiled.");
+
+  // Stop the copy updating itself (see src/updates.js). The launcher keeps it
+  // current instead, on the first click after /Applications/Claude.app
+  // updates, which avoids the relaunch onto the default account that every
+  // self-update causes.
+  if (clonePath) {
+    try {
+      const r = blockUpdates(dataDir);
+      if (r === "foreign") {
+        warn("This data folder already has its own Claude configuration; left it alone.");
+        info("  The copy may update itself. `claude-multiprofile doctor` explains what that means.");
+      } else {
+        ok("Updates managed by the launcher: the copy is refreshed when your main Claude updates.");
+      }
+    } catch (e) {
+      warn(`Could not set up managed updates: ${e.message}`);
+    }
+  }
 
   if (applyIcon) {
     const applied = copyClaudeIcon(appPath, claudeAppPath);

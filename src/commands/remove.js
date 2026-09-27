@@ -12,7 +12,9 @@ import { select, confirm } from "@inquirer/prompts";
 import { getRegistry, removeFromRegistry } from "../registry.js";
 import { removeAlias } from "../code.js";
 import { resyncDenyRules, stripManagedDenyRules } from "../permissions.js";
-import { removeClone } from "../appclone.js";
+import { removeClone, clonePathFor, cloneIsRunning } from "../appclone.js";
+import { dataDirInUse } from "../desktop.js";
+import { unblockUpdates } from "../updates.js";
 import {
   header,
   ok,
@@ -56,6 +58,14 @@ export async function remove(args) {
   const profile = reg.profiles.find((p) => p.name === target);
   if (!profile) {
     warn(`Profile "${target}" not found. Run \`claude-multiprofile list\` to see options.`);
+    return;
+  }
+
+  // Removal deletes the profile's copy of Claude.app, and deleting an app
+  // while it runs can crash it mid-write. Refuse before asking anything.
+  if (profile.desktop && (cloneIsRunning(clonePathFor(profile.name)) || dataDirInUse(profile.desktop.dataDir))) {
+    warn(`"${profile.name}" is open in Claude Desktop.`);
+    info("Quit it first (Claude > Quit Claude in that window), then run remove again.");
     return;
   }
 
@@ -127,6 +137,15 @@ export async function remove(args) {
         ok(`Deleted ${pathStr(tildify(profile.desktop.dataDir))}.`);
       } catch (e) {
         warn(`Could not delete data folder: ${e.message}`);
+      }
+    }
+    // The update settings belong with the data folder: kept with it, removed
+    // with it. Only what the tool wrote is ever removed.
+    if (wipeDesktopData) {
+      try {
+        if (unblockUpdates(profile.desktop.dataDir)) ok("Removed its update settings.");
+      } catch (e) {
+        warn(`Could not remove its update settings: ${e.message}`);
       }
     }
   }

@@ -37,6 +37,8 @@ import {
   stripAssetCatalog,
   hasAssetCatalog,
   compileApp,
+  launchTargetFor,
+  launcherUsesHelper,
   copyClaudeIcon,
   findClaudeApp,
   DEFAULT_APPLET_BUNDLE_ID,
@@ -49,8 +51,13 @@ import {
   ensureColoredClone,
   applyColor,
   hasCustomIcon,
+  parseRunningCopies,
+  runningCopies,
+  cloneIsRunning,
 } from "../appclone.js";
 import { resyncDenyRules, auditDenyRules, readProtectionEnabled } from "../permissions.js";
+import { updateBlockState, blockUpdates, wantsUpdateBlock } from "../updates.js";
+import { helperState, installHelper, recentLaunchLog, HELPER_PATH, LAUNCH_LOG } from "../launchhelper.js";
 import { detectShell, rcPathForShell, readManagedAliases } from "../shell.js";
 import {
   HOME,
@@ -592,7 +599,7 @@ function checkLauncherEnv(t, reg, fix) {
         name: p.name,
         dataDir: p.desktop.dataDir,
         appPath: p.desktop.appPath,
-        claudeAppPath: p.desktop.claudeAppPath,
+        ...launchTargetFor(p.name, p.desktop),
         codeConfigDir: expected,
         // Carry gh isolation through the rebuild; omitting it here would
         // strip a working GH_CONFIG_DIR while repairing the other variable.
@@ -720,7 +727,7 @@ function checkAppClones(t, reg, fix) {
       continue;
     }
     try {
-      const clone = ensureColoredClone({
+      ensureColoredClone({
         name: p.name,
         claudeAppPath: p.desktop.claudeAppPath,
         color: p.desktop.color || null,
@@ -730,10 +737,9 @@ function checkAppClones(t, reg, fix) {
         name: p.name,
         dataDir: p.desktop.dataDir,
         appPath: p.desktop.appPath,
-        claudeAppPath: clone,
+        ...launchTargetFor(p.name, p.desktop),
         codeConfigDir: p.code ? p.code.configDir : undefined,
         ghConfigDir: p.code ? p.code.ghConfigDir || undefined : undefined,
-        dedicatedBundle: true,
       });
       copyClaudeIcon(p.desktop.appPath, p.desktop.claudeAppPath);
       refreshLauncher(p.desktop.appPath);
@@ -752,8 +758,11 @@ function checkAppClones(t, reg, fix) {
     // Behind its source: rebuilding is an upgrade, and re-tints on the way.
     if (state === "behind") {
       warn(`${p.name}: copy is Claude ${v.clone}, but ${v.source} is installed.`);
-      info("  This profile would keep launching the older build.");
-      if (fix) {
+      info("  Its launcher updates it the next time you open it.");
+      if (fix && cloneIsRunning(clone)) {
+        info("  It is open right now, so it was left alone; rebuilding an open app can crash it.");
+        t.warnings++;
+      } else if (fix) {
         try {
           ensureColoredClone({
             name: p.name,
@@ -814,6 +823,114 @@ function checkAppClones(t, reg, fix) {
   }
 }
 
+// ---- Check: managed updates --------------------------------------------------
+//
+// Since v0.1.29 a profile's copy of Claude does not update itself. Its
+// launcher refreshes it from /Applications/Claude.app on the first click after
+// that updates (src/launchhelper.js), and the copy's own updater is blocked
+// per profile (src/updates.js). A self-update relaunches the copy onto the
+// default account and throws away its colour, so this is the difference
+// between a profile that stays itself and one that quietly does not.
+
+function checkManagedUpdates(t, reg, fix) {
+  if (!isMac()) return;
+  const withCopies = reg.profiles.filter(
+    (p) => p.desktop && p.desktop.claudeAppPath && fileExists(clonePathFor(p.name))
+  );
+  if (withCopies.length === 0) return;
+
+  step("Profile updates");
+
+  // The helper every managed launcher calls.
+  const hs = helperState();
+  if (hs !== "current") {
+    warn(hs === "missing" ? "The launch helper is not installed." : "The launch helper is out of date.");
+    info("  Launchers still open Claude without it, but copies are not kept current");
+    info("  and a profile open on the wrong account is not caught.");
+    if (fix) {
+      try {
+        installHelper();
+        ok(`  Repaired: helper written to ${tildify(HELPER_PATH)}`);
+      } catch (e) {
+        err(`  Could not write the helper: ${e.message}`);
+        t.problems++;
+      }
+    } else {
+      info(`  Repair with ${command("claude-multiprofile doctor --fix")}`);
+      t.warnings++;
+    }
+  }
+
+  for (const p of withCopies) {
+    // Launchers built before v0.1.29 open the copy directly.
+    if (fileExists(p.desktop.appPath) && launcherUsesHelper(p.desktop.appPath) === false) {
+      warn(`${p.name}: its launcher opens the copy directly, without the helper.`);
+      if (fix) {
+        try {
+          compileApp({
+            name: p.name,
+            dataDir: p.desktop.dataDir,
+            appPath: p.desktop.appPath,
+            ...launchTargetFor(p.name, p.desktop),
+            codeConfigDir: p.code ? p.code.configDir : undefined,
+            ghConfigDir: p.code ? p.code.ghConfigDir || undefined : undefined,
+          });
+          refreshLauncher(p.desktop.appPath);
+          ok("  Repaired: launcher rebuilt in place (a Dock pin keeps working).");
+        } catch (e) {
+          err(`  Could not rebuild the launcher: ${e.message}`);
+          t.problems++;
+        }
+      } else {
+        info(`  Repair with ${command("claude-multiprofile doctor --fix")}`);
+        t.warnings++;
+      }
+    }
+
+    const block = updateBlockState(p.desktop.dataDir);
+    if (!wantsUpdateBlock(p)) {
+      info(`${p.name}: updates itself, by choice (${command(`claude-multiprofile self-update ${p.name} off`)} to change).`);
+      continue;
+    }
+    if (block.state === "blocked") {
+      ok(`${p.name}: updates managed by its launcher.`);
+      continue;
+    }
+    if (block.state === "foreign") {
+      info(`${p.name}: has its own Claude configuration (likely third-party inference), left alone.`);
+      info(block.blocked
+        ? "  It already blocks updates, so the copy stays put and its launcher keeps it current."
+        : "  The copy may update itself, which relaunches it on the default account.");
+      continue;
+    }
+    warn(`${p.name}: its copy of Claude updates itself.`);
+    info("  Every update relaunches it on your default account and removes its colour.");
+    if (fix) {
+      try {
+        blockUpdates(p.desktop.dataDir);
+        ok("  Repaired: updates now managed by its launcher.");
+        info("  Takes effect the next time the profile starts.");
+      } catch (e) {
+        err(`  Could not set up managed updates: ${e.message}`);
+        t.problems++;
+      }
+    } else {
+      info(`  Repair with ${command("claude-multiprofile doctor --fix")}`);
+      t.warnings++;
+    }
+  }
+
+  // What the helper hit recently. It never blocks a launch, so a failure only
+  // shows up here.
+  const errors = recentLaunchLog({ levels: ["ERROR"] });
+  if (errors.length > 0) {
+    warn(`The launch helper hit ${errors.length} error(s) in the last 7 days:`);
+    for (const e of errors.slice(-3)) console.log(`      ${dim(e.line)}`);
+    info(`  Full log: ${tildify(LAUNCH_LOG)}`);
+    t.warnings++;
+  }
+}
+
 // ---- Check: how the Desktop app is actually being started -------------------
 //
 // Desktop isolation lives in the launch COMMAND, not in the app: the launcher
@@ -831,35 +948,10 @@ function checkAppClones(t, reg, fix) {
 // wrong account - so check the failure itself (a copy running with no
 // --user-data-dir) and its usual cause (a copy pinned to the Dock).
 
-export function parseRunningCopies(psOutput, copyPath) {
-  const needle = path.join(copyPath, "Contents", "MacOS") + path.sep;
-  const found = [];
-  for (const line of psOutput.split("\n")) {
-    // Renderer/GPU helpers live in their own nested bundles under
-    // Contents/Frameworks, never Contents/MacOS, so the needle already excludes
-    // them. Matching on the word "Helper" as well would look like belt and
-    // braces but would skip a profile actually named "Helper", and a profile
-    // this check stays silent about is the exact failure it exists to catch.
-    if (!line.includes(needle)) continue;
-    const match = line.trim().match(/^(\d+)\s+(.*)$/);
-    if (match) found.push({ pid: match[1], command: match[2] });
-  }
-  return found;
-}
-
-function runningCopies(copyPath) {
-  try {
-    return parseRunningCopies(
-      execFileSync("ps", ["-axo", "pid=,command="], {
-        encoding: "utf8",
-        maxBuffer: 8 * 1024 * 1024,
-      }),
-      copyPath
-    );
-  } catch {
-    return [];
-  }
-}
+// parseRunningCopies and runningCopies now live in src/appclone.js, next to the
+// copies they describe, so rename and the rebuild paths can ask the same
+// question. Re-exported here for existing callers and tests.
+export { parseRunningCopies };
 
 // The Dock's plist holds binary icon blobs, so `plutil -convert json` refuses
 // the whole thing. Pull the tile URLs out of the textual plist instead.
@@ -982,7 +1074,7 @@ function checkGhIsolation(t, reg, fix) {
                 name: p.name,
                 dataDir: p.desktop.dataDir,
                 appPath: p.desktop.appPath,
-                claudeAppPath: p.desktop.claudeAppPath,
+                ...launchTargetFor(p.name, p.desktop),
                 codeConfigDir: p.code.configDir,
                 ghConfigDir: p.code.ghConfigDir,
               });
@@ -1103,6 +1195,7 @@ export async function doctor(args = []) {
   checkLauncherEnv(t, reg, fix);
   checkAccountCollisions(t, reg);
   checkAppClones(t, reg, fix);
+  checkManagedUpdates(t, reg, fix);
   checkDesktopLaunchPath(t, reg);
   checkGhIsolation(t, reg, fix);
   checkDenyRules(t, reg, fix);

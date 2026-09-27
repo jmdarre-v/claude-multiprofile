@@ -1297,3 +1297,205 @@ test("hasCustomIcon: no Icon\\r file means no colour, whatever the flags say", a
   assert.equal(hasCustomIcon(dir), false);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// ---------------------------------------------------------------------------
+// updates.js - per-profile update blocking (managed updates)
+// ---------------------------------------------------------------------------
+//
+// The folder these write is also where a user keeps their own third-party
+// inference setup, so the invariants that matter are about what is NEVER
+// touched, as much as what is written.
+
+test("blockUpdates: writes the verified layout, and only once", async () => {
+  const { blockUpdates, updateBlockState, localConfigRootFor } = await import("../src/updates.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-upd-"));
+  const dataDir = path.join(root, "Claude-WORK");
+
+  assert.equal(updateBlockState(dataDir).state, "absent");
+  assert.equal(blockUpdates(dataDir), "created");
+  assert.equal(updateBlockState(dataDir).state, "blocked");
+  assert.equal(blockUpdates(dataDir), "already", "idempotent");
+
+  // The same shape Claude itself writes, with only the key added.
+  const lib = path.join(localConfigRootFor(dataDir), "configLibrary");
+  const meta = JSON.parse(fs.readFileSync(path.join(lib, "_meta.json"), "utf8"));
+  assert.match(meta.appliedId, /^[a-f0-9-]{36}$/, "Claude only accepts a lowercase UUID id");
+  assert.deepEqual(meta.entries, [{ id: meta.appliedId, name: "Default" }]);
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(path.join(lib, `${meta.appliedId}.json`), "utf8")),
+    { disableAutoUpdates: true }
+  );
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("blockUpdates: never edits a configuration it did not write", async () => {
+  const { blockUpdates, unblockUpdates, updateBlockState, localConfigRootFor } = await import("../src/updates.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-upd-"));
+  const dataDir = path.join(root, "Claude-WORK");
+
+  // Someone's own third-party inference setup, in the same folder.
+  const lib = path.join(localConfigRootFor(dataDir), "configLibrary");
+  fs.mkdirSync(lib, { recursive: true });
+  const theirs = { inferenceProvider: "bedrock", awsRegion: "us-east-1" };
+  fs.writeFileSync(path.join(lib, "11111111-1111-1111-1111-111111111111.json"), JSON.stringify(theirs));
+  const theirMeta = { appliedId: "11111111-1111-1111-1111-111111111111", entries: [{ id: "11111111-1111-1111-1111-111111111111", name: "Bedrock" }] };
+  fs.writeFileSync(path.join(lib, "_meta.json"), JSON.stringify(theirMeta));
+  const before = fs.readdirSync(lib).sort().map((f) => [f, fs.readFileSync(path.join(lib, f), "utf8")]);
+
+  assert.equal(updateBlockState(dataDir).state, "foreign");
+  assert.equal(blockUpdates(dataDir), "foreign");
+  assert.equal(unblockUpdates(dataDir), false);
+  const after = fs.readdirSync(lib).sort().map((f) => [f, fs.readFileSync(path.join(lib, f), "utf8")]);
+  assert.deepEqual(after, before, "byte-identical");
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("unblockUpdates and moveUpdateBlock: act on the tool's own block only", async () => {
+  const { blockUpdates, unblockUpdates, moveUpdateBlock, updateBlockState, localConfigRootFor } = await import("../src/updates.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-upd-"));
+  const oldDir = path.join(root, "Claude-OLD");
+  const newDir = path.join(root, "Claude-NEW");
+
+  blockUpdates(oldDir);
+  // Claude derives the folder from the data dir, so a rename must carry it.
+  assert.equal(moveUpdateBlock(oldDir, newDir), true);
+  assert.equal(updateBlockState(newDir).state, "blocked");
+  assert.equal(updateBlockState(oldDir).state, "absent");
+
+  assert.equal(unblockUpdates(newDir), true);
+  assert.equal(updateBlockState(newDir).state, "absent");
+  assert.equal(fs.existsSync(localConfigRootFor(newDir)), false, "an emptied -3p folder is removed");
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("localConfigRootFor and wantsUpdateBlock", async () => {
+  const { localConfigRootFor, wantsUpdateBlock } = await import("../src/updates.js");
+  // Claude's own rule: a data dir already ending in -3p is used as is.
+  assert.equal(localConfigRootFor("/x/Claude-WORK"), "/x/Claude-WORK-3p");
+  assert.equal(localConfigRootFor("/x/Claude-3p"), "/x/Claude-3p");
+  // Blocking is the default; only an explicit choice turns it off.
+  assert.equal(wantsUpdateBlock({ desktop: {} }), true);
+  assert.equal(wantsUpdateBlock({ desktop: { selfUpdate: false } }), true);
+  assert.equal(wantsUpdateBlock({ desktop: { selfUpdate: true } }), false);
+  assert.equal(wantsUpdateBlock({ desktop: null }), false);
+});
+
+test("dataDirInUse: an exact data folder, never a longer one", async () => {
+  const { dataDirInUse } = await import("../src/desktop.js");
+  const ps = [
+    "  101 /Apps/Claude work.app/Contents/MacOS/Claude --user-data-dir=/Users/x/Library/Application Support/Claude-WORK2",
+    "  102 /Applications/Claude.app/Contents/MacOS/Claude",
+  ].join("\n");
+  assert.equal(dataDirInUse("/Users/x/Library/Application Support/Claude-WORK", ps), false, "WORK is not WORK2");
+  assert.equal(dataDirInUse("/Users/x/Library/Application Support/Claude-WORK2", ps), true);
+  const trailing = "  103 /x/Claude --user-data-dir=/Users/x/Library/Application Support/Claude-WORK --flag";
+  assert.equal(dataDirInUse("/Users/x/Library/Application Support/Claude-WORK", trailing), true);
+});
+
+test("buildLaunchAppleScript: a profile with its own copy goes through the helper, with a fallback", async (t) => {
+  const { buildLaunchAppleScript, launcherCodeConfigDir, launcherGhConfigDir, launcherUsesHelper } = await import("../src/desktop.js");
+  const helper = {
+    path: "/Users/x/Library/Application Support/claude-multiprofile/bin/launch.js",
+    source: "/Applications/Claude.app",
+    hue: "160",
+    label: "Claude WORK",
+  };
+  const clone = "/Users/x/Library/Application Support/claude-multiprofile/apps/Claude work.app";
+  const s = buildLaunchAppleScript("/Users/x/Claude-WORK", clone, "/c", "/c/gh", true, helper);
+  assert.ok(s.includes("claude-multiprofile/bin/launch.js"), "calls the helper");
+  // If the helper file is missing, the launcher must still open Claude
+  // exactly as it did before, or the helper becomes a way to break launching.
+  const legacy = buildLaunchAppleScript("/Users/x/Claude-WORK", clone, "/c", "/c/gh", true);
+  const legacyLine = legacy.slice('do shell script "'.length, -1);
+  assert.ok(s.includes(`else ${legacyLine} fi`), "the fallback is the pre-helper line, verbatim");
+  // No dedicated copy: no helper, whatever is passed.
+  assert.ok(!buildLaunchAppleScript("/d", "/Applications/Claude.app", null, null, false, helper).includes("launch.js"));
+
+  if (process.platform !== "darwin") {
+    t.skip("osacompile is macOS only");
+    return;
+  }
+  // It must compile, and doctor must still read the env back out of it.
+  const { execFileSync } = await import("node:child_process");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-helper-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const src = path.join(root, "l.applescript");
+  const app = path.join(root, "L.app");
+  // An apostrophe in the home folder reaches the helper path too.
+  const odd = { ...helper, path: path.join(root, "o'brien", "claude-multiprofile", "bin", "launch.js") };
+  fs.writeFileSync(src, buildLaunchAppleScript(path.join(root, "data"), clone, path.join(root, "o'brien-cfg"), "/c/gh", true, odd));
+  execFileSync("/usr/bin/osacompile", ["-o", app, src], { stdio: "pipe" });
+  assert.equal(launcherCodeConfigDir(app), path.join(root, "o'brien-cfg"), "env still readable, apostrophe and all");
+  assert.equal(launcherGhConfigDir(app), "/c/gh");
+  assert.equal(launcherUsesHelper(app), true);
+});
+
+test("launch helper: decides by version and by which profile a copy is running on", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("osascript is macOS only");
+    return;
+  }
+  const { HELPER_JS } = await import("../src/launchhelper.js");
+  const { execFileSync } = await import("node:child_process");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-helper-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const helper = path.join(root, "launch.js");
+  fs.writeFileSync(helper, HELPER_JS);
+
+  // Stand-in apps: only Info.plist is read before anything is launched.
+  const fakeApp = (name, version) => {
+    const dir = path.join(root, name, "Contents");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "Info.plist"),
+      `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleShortVersionString</key><string>${version}</string></dict></plist>`
+    );
+    return path.join(root, name);
+  };
+  const source = fakeApp("Source.app", "2.10.0");
+  const decide = (clone) =>
+    execFileSync("/usr/bin/osascript", ["-l", "JavaScript", helper, clone, source, "", path.join(root, "data"), "Claude T", "-a", clone], {
+      encoding: "utf8",
+      env: { ...process.env, CMP_LAUNCH_DRY_RUN: "1" },
+    }).trim();
+
+  // Numeric, not lexical: 2.9.0 is behind 2.10.0.
+  assert.equal(decide(fakeApp("Behind.app", "2.9.0")), "not running: would-refresh 2.9.0 -> 2.10.0");
+  assert.equal(decide(fakeApp("Current.app", "2.10.0")), "not running: current");
+  // A copy that updated itself past its source is kept, never downgraded.
+  assert.equal(decide(fakeApp("Ahead.app", "2.11.0")), "not running: current");
+  assert.equal(decide(path.join(root, "Missing.app")), "not running: unknown");
+});
+
+test("compileApp: refuses a launcher path that is the app it opens, case-insensitively", async () => {
+  const { compileApp } = await import("../src/desktop.js");
+  // Found the hard way: on a case-insensitive disk, "Claude HT.app" and
+  // "Claude ht.app" are one folder. Writing the launcher there deleted the
+  // copy, and the launcher then opened itself in a loop.
+  assert.throws(
+    () => compileApp({ name: "x", dataDir: "/d", appPath: "/tmp/Claude HT.app", claudeAppPath: "/tmp/Claude ht.app", dedicatedBundle: true }),
+    /same as the app it opens/
+  );
+});
+
+test("launch helper: never opens something that is not Claude", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("osascript is macOS only");
+    return;
+  }
+  const { HELPER_JS } = await import("../src/launchhelper.js");
+  const { execFileSync } = await import("node:child_process");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-helper-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, "launch.js"), HELPER_JS);
+  // A launcher (an AppleScript applet) where the copy should be: opening it
+  // would run the helper again.
+  const applet = path.join(root, "Applet.app", "Contents");
+  fs.mkdirSync(applet, { recursive: true });
+  fs.writeFileSync(path.join(applet, "Info.plist"),
+    `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.claude-multiprofile.x</string><key>CFBundleShortVersionString</key><string>1.0</string></dict></plist>`);
+  const out = execFileSync("/usr/bin/osascript", ["-l", "JavaScript", path.join(root, "launch.js"),
+    path.join(root, "Applet.app"), "/Applications/Claude.app", "", path.join(root, "d"), "T", "-a", path.join(root, "Applet.app")],
+    { encoding: "utf8", env: { ...process.env, CMP_LAUNCH_DRY_RUN: "1" } }).trim();
+  assert.equal(out, "refused: not Claude");
+});

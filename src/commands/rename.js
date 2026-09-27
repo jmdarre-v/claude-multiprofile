@@ -41,10 +41,15 @@ import {
 } from "../code.js";
 import {
   compileApp,
+  launchTargetFor,
   copyClaudeIcon,
   defaultDataDirFor,
   defaultAppPathFor,
+  dataDirInUse,
 } from "../desktop.js";
+import { clonePathFor, cloneIsRunning } from "../appclone.js";
+import { moveUpdateBlock } from "../updates.js";
+import { RESERVED_NAMES } from "./add.js";
 import {
   header,
   ok,
@@ -150,6 +155,7 @@ export async function rename(args = []) {
         const cleaned = sanitizeName(v);
         if (!cleaned) return "Name cannot be empty.";
         if (cleaned === oldName) return "That's the current name.";
+        if (RESERVED_NAMES[cleaned]) return `"${cleaned}" is reserved. It would collide with ${RESERVED_NAMES[cleaned]}.`;
         if (findProfile(cleaned)) return `Profile "${cleaned}" already exists.`;
         return true;
       },
@@ -163,6 +169,23 @@ export async function rename(args = []) {
   }
   if (findProfile(newName)) {
     err(`Profile "${newName}" already exists.`);
+    process.exit(1);
+  }
+  // Checked here as well as in the prompt, because a name given on the
+  // command line never goes through the prompt.
+  if (RESERVED_NAMES[newName]) {
+    err(`"${newName}" is reserved. It would collide with ${RESERVED_NAMES[newName]}.`);
+    process.exit(1);
+  }
+
+  // A Desktop profile that is open cannot be renamed safely: its data folder
+  // is about to move, and a running Claude keeps writing to the path it was
+  // started with, which would split the profile's data across two folders.
+  // Its copy of Claude.app moves too. Checked before the review, so nobody
+  // confirms a rename that is about to be refused.
+  if (profile.desktop && (cloneIsRunning(clonePathFor(oldName)) || dataDirInUse(profile.desktop.dataDir))) {
+    err(`"${oldName}" is open in Claude Desktop.`);
+    info("Quit it first (Claude > Quit Claude in that window), then run the rename again.");
     process.exit(1);
   }
 
@@ -259,6 +282,38 @@ export async function rename(args = []) {
         err(`Could not move data folder: ${e.message}`);
         process.exit(1);
       }
+      // Claude reads the update block from a folder named after the data
+      // folder, so it has to move with it or it silently stops applying.
+      try {
+        if (moveUpdateBlock(profile.desktop.dataDir, newDesktop.dataDir)) {
+          ok("Moved its update settings with it.");
+        }
+      } catch (e) {
+        warn(`Could not move the update settings: ${e.message}`);
+        info(`Run ${command("claude-multiprofile doctor --fix")} to set them up again.`);
+      }
+    }
+
+    // The copy of Claude.app is named after the profile. Left behind, it
+    // would be orphaned and the renamed profile would have no copy at all.
+    const oldClone = clonePathFor(oldName);
+    const newClone = clonePathFor(newName);
+    if (fileExists(oldClone) && !fileExists(newClone)) {
+      try {
+        fs.renameSync(oldClone, newClone);
+        if (fileExists(LSREGISTER)) {
+          try {
+            execFileSync(LSREGISTER, ["-u", oldClone], { stdio: "pipe" });
+            execFileSync(LSREGISTER, ["-f", newClone], { stdio: "pipe" });
+          } catch {
+            // Non-fatal; registration catches up.
+          }
+        }
+        ok(`Moved its copy of Claude to ${pathStr(tildify(newClone))}.`);
+      } catch (e) {
+        warn(`Could not move its copy of Claude: ${e.message}`);
+        info(`Run ${command("claude-multiprofile doctor --fix")} to build a new one.`);
+      }
     }
 
     // Unregister and delete the old launcher before building the new one, so
@@ -287,8 +342,11 @@ export async function rename(args = []) {
         name: newName,
         dataDir: newDesktop.dataDir,
         appPath: newDesktop.appPath,
-        claudeAppPath: profile.desktop.claudeAppPath,
+        ...launchTargetFor(newName, profile.desktop),
         codeConfigDir: newCode ? newCode.configDir : undefined,
+        // Carry gh isolation across the rename; omitting it dropped a
+        // working GH_CONFIG_DIR from the launcher.
+        ghConfigDir: newCode ? newCode.ghConfigDir || undefined : undefined,
       });
       copyClaudeIcon(newDesktop.appPath, profile.desktop.claudeAppPath);
       ok(`Rebuilt launcher at ${pathStr(tildify(newDesktop.appPath))}.`);

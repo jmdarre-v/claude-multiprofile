@@ -115,9 +115,26 @@ What it costs, stated plainly:
 
 - **Disk: a few megabytes, not a few hundred.** The copy is an APFS clone (`cp -Rc`), so its blocks are shared with the original until one side changes. Measured on an 800MB Claude.app: about 1.5 seconds and 3MB of real disk.
 - **Signature: identity survives, strict verification does not.** The tint is attached as Finder metadata rather than by editing the bundle, so the copy still reports `com.anthropic.claudefordesktop` with Anthropic's Team ID, and Gatekeeper accepts it. `codesign --verify --deep --strict` does fail on it, the same as for any app carrying a custom icon.
-- **The copy updates itself, and each update costs you the colour.** An earlier version of this README said the copy does not update. That was wrong, as [issue #9](https://github.com/jmdarre-v/claude-multiprofile/issues/9) showed. The copy is a real Claude.app, so Claude's own updater runs inside it and replaces the whole app, which throws away the tint. `doctor` checks the colour directly, and `doctor --fix` puts it back without rebuilding anything.
-- **The copy can be newer than `/Applications/Claude.app`, and that is fine.** If the copy updated itself first, it is kept. Only a copy that is *behind* the installed Claude gets rebuilt, since rebuilding a newer one would be a downgrade.
-- **After an update, Claude relaunches the copy on the wrong account.** The updater restarts the copy directly, without the launcher's `--user-data-dir`, so the relaunched window runs on the shared default profile. `doctor` reports a copy running this way. Quit it and reopen from the launcher: clicking the launcher while that window is open only brings the same window forward.
+- **Updates: see [How profiles stay up to date](#how-profiles-stay-up-to-date).** The copy is a real Claude.app, so left alone it updates itself, and each self-update throws away the colour and relaunches the copy on the wrong account. Since v0.1.29 the launcher keeps the copy current instead.
+
+### How profiles stay up to date
+
+Each Desktop profile runs its own copy of Claude.app. An earlier version of this README said that copy does not update itself. That was wrong, as [issue #9](https://github.com/jmdarre-v/claude-multiprofile/issues/9) showed: it is a real Claude, so Claude's own updater runs inside it. Every such update does three things you do not want. It throws away the profile's colour. It relaunches the copy **without** the launcher's `--user-data-dir`, so the new window is on your default account while looking like the profile. And it shares one update state file with your main Claude, since macOS sees them as the same app.
+
+Since v0.1.29, profiles are updated differently:
+
+1. **The copy's own updater is blocked, per profile.** Claude supports a "Block auto-updates" policy (`disableAutoUpdates`), and reads it from a folder named after the profile's data folder (`Claude-WORK-3p/`), so it applies to that profile alone. Your main Claude, in `/Applications`, keeps updating itself exactly as before. The tool only ever writes that folder when it does not exist, because it is also where Claude keeps a third-party inference setup (Bedrock, Vertex, a gateway), and it never edits a configuration it did not create.
+2. **The launcher keeps the copy current.** When you click a profile, its launcher first compares the copy with `/Applications/Claude.app`. If the copy is behind, it rebuilds it (about a second, as an APFS clone), puts the colour back, and then opens it. So a profile picks up a new Claude the first time you open it after your main Claude updates. If anything goes wrong, it logs the problem and opens the copy as it is: the helper is never the reason Claude does not open.
+3. **The launcher catches the wrong account.** If you click a profile while its copy is already open on the wrong account (from a pinned window tile, Spotlight, a Login Item, or an update relaunch), it asks whether to quit that window and reopen the profile properly. It asks rather than quitting on its own, so nothing unsaved is lost.
+
+The launcher's work is done by a small helper at `~/Library/Application Support/claude-multiprofile/bin/launch.js`. It runs with `osascript`, which ships with macOS, because apps started from the Dock do not get your shell's `PATH` and so cannot rely on Node. Its log is `launch.log` in the same folder, and `doctor` reports any errors from it.
+
+Two things to know:
+
+- **The Code tab in Claude Desktop is pinned the same way.** Desktop keeps its own copy of Claude Code per profile and updates it with the same policy, so a profile's Code tab moves forward when its copy is rebuilt. The `claude-<name>` command in your terminal is unaffected: it runs your npm-installed `claude`.
+- **You can opt a profile out.** `claude-multiprofile self-update <name> on` lets Claude update that profile's copy itself again, with the drawbacks above. `self-update <name> off` returns it to the default.
+
+Profiles created before v0.1.29 are switched over by `claude-multiprofile doctor --fix`, which installs the helper, rebuilds their launchers in place (a Dock pin keeps working), and sets up the block. It takes effect the next time each profile starts.
 
 `remove` deletes the copy along with the profile. No build tools are required: the tinting and icon work go through `osascript`, which ships with macOS.
 
@@ -190,16 +207,19 @@ It checks:
 - **Launchers that don't export `CLAUDE_CONFIG_DIR`.** Launchers created before v0.1.12 let Claude Code sessions started from inside Desktop fall back to the shared `~/.claude`. `doctor` reads the launcher's compiled script to find them, and `--fix` rebuilds them in place.
 - **How Desktop is actually being started.** A profile's copy of Claude.app is isolated by the `--user-data-dir` the launcher passes it, so a copy started any other way (a Dock tile pinned from the running window, Spotlight, a Login Item, Claude relaunching itself after an update) runs on the shared default profile instead. Nothing looks wrong; it is just the wrong account. `doctor` reports any copy running without the argument, and flags a copy pinned to the Dock, which is the usual cause.
 - **Two profiles signed in as the same account.** The same wrong-account symptom from a different cause. Signing in uses a `claude://` deep link, and with two Claude windows open the callback can reach the wrong instance, putting the token in the wrong data folder. The profile then opens the right folder while authenticated as the wrong account. Comparing the recorded account across profiles is the only visible signal, and `doctor` now does it. Recovery is manual: quit every Claude window, open only the affected profile, sign out, and sign back in with nothing else running.
+- **How each profile updates.** Whether its copy of Claude is blocked from updating itself and kept current by its launcher (see [How profiles stay up to date](#how-profiles-stay-up-to-date)), whether its launcher uses the launch helper, whether that helper is installed and current, and any errors the helper logged in the last week. Separately, it checks each coloured copy still has its colour, since an update removes it.
 - **A corrupt registry file.** A registry that exists but isn't valid JSON otherwise masquerades as "no profiles configured". Mutating commands refuse to run until it's fixed, and every write keeps a `.bak` of the last good version next to it.
 - **Cross-profile read protection** drift (see [Profile isolation](#profile-isolation) below).
 
-`--fix` repairs what's safe to repair automatically: deny-rule drift, default bundle IDs, and launchers missing `CLAUDE_CONFIG_DIR`. Everything else is reported with the command to run.
+`--fix` repairs what's safe to repair automatically: deny-rule drift, default bundle IDs, launchers missing `CLAUDE_CONFIG_DIR`, a lost colour, a missing or outdated launch helper, launchers that do not use it, and profiles whose copy still updates itself. It never rebuilds a copy that is open, because deleting an app while it runs can crash it. Everything else is reported with the command to run.
 
 ### `claude-multiprofile rename [old] [new]`
 
 Renames a profile and moves everything that encodes its name: the Code config folder, the shell alias, the Desktop data folder, the launcher `.app` and its bundle ID, the registry entry, and every other profile's isolation rules.
 
-Paths you chose manually are left where they are; only folders still at their default location get moved.
+Paths you chose manually are left where they are; only folders still at their default location get moved. The profile's copy of Claude and its update settings move with it.
+
+A Desktop profile that is open is refused: its data folder is about to move, and a running Claude keeps writing to the path it started with. Quit it first.
 
 **Renaming a Code profile signs it out.** Claude Code stores its login in the macOS Keychain under a key derived from the config folder path, so moving the folder orphans the token and you'll run `/login` once more. This tool deliberately does not try to move the Keychain entry: the key derivation isn't reproducible, and guessing risks clobbering a different account's credentials. Chats, skills, and MCP config all move normally. Desktop profiles are unaffected, since their auth lives inside the folder being moved.
 
@@ -235,9 +255,19 @@ For Code-only profiles, this command has nothing to repair (there's no .app) and
 
 ### `claude-multiprofile remove [name]`
 
-Tears down a profile. Unregisters and removes the launcher .app, removes the shell alias and the registry entry, and rewrites the remaining profiles' isolation rules. By default the data folders are kept (so you can recover your chats if you change your mind). The wizard asks separately about deleting the data folders.
+Tears down a profile. Refuses while the profile is open in Claude Desktop, since it deletes the profile's copy of Claude. Unregisters and removes the launcher .app, removes the shell alias and the registry entry, and rewrites the remaining profiles' isolation rules. By default the data folders are kept (so you can recover your chats if you change your mind). The wizard asks separately about deleting the data folders.
 
 One thing it deliberately leaves behind: the profile's saved login in your Keychain. Claude Code keys those entries by a hash of the config directory that this tool can't reproduce, and deleting the wrong one would take out another account's credentials. The orphan is inert. To avoid creating one, run `/logout` inside the profile before removing it; to clear it by hand, search Keychain Access for `Claude Code-credentials`.
+
+### `claude-multiprofile self-update [name] [on|off]`
+
+Shows or changes who updates each Desktop profile's copy of Claude. `off` is the default: the copy's own updater is blocked and its launcher keeps it current. `on` lets Claude update the copy itself, as before v0.1.29, which relaunches it on your default account and removes its colour on every update. See [How profiles stay up to date](#how-profiles-stay-up-to-date).
+
+```bash
+claude-multiprofile self-update              # every profile's mode
+claude-multiprofile self-update work on      # let Claude update it itself
+claude-multiprofile self-update work off     # back to the default
+```
 
 ### `claude-multiprofile help` / `--version`
 

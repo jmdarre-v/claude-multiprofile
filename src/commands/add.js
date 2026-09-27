@@ -41,6 +41,7 @@ import {
   defaultAppPathFor,
   setupDesktop,
   compileApp,
+  launchTargetFor,
   copyClaudeIcon,
 } from "../desktop.js";
 
@@ -67,12 +68,17 @@ const LSREGISTER =
 // rather than asking, because there is never a good reason to claim them.
 //
 // Keyed by profile name; the value is what it would collide with.
-const RESERVED_NAMES = {
+export const RESERVED_NAMES = {
   mem: "claude-mem (~/.claude-mem)",
   profiles: "claude-profiles (~/.claude-profiles)",
   multiprofile: "this tool's own config (~/.claude-multiprofile)",
   code: "reserved (~/.claude-code)",
   desktop: "reserved (~/.claude-desktop)",
+  // A profile's Desktop data folder is Claude-<NAME>, uppercased for short
+  // names, so "3p" would get Claude-3P. On the default case-insensitive disk
+  // that IS Claude-3p, the folder where the main Claude keeps its local
+  // configuration, and the profile would run inside it.
+  "3p": "the main Claude's local configuration folder (~/Library/Application Support/Claude-3p)",
 };
 
 // A complete profile can still gain something: its own GitHub CLI login, if
@@ -371,7 +377,7 @@ async function enableGhForProfile(profile) {
           name: profile.name,
           dataDir: profile.desktop.dataDir,
           appPath: profile.desktop.appPath,
-          claudeAppPath: profile.desktop.claudeAppPath,
+          ...launchTargetFor(profile.name, profile.desktop),
           codeConfigDir: profile.code.configDir,
           ghConfigDir,
         });
@@ -516,8 +522,11 @@ async function linkExisting(profile, missing) {
           name: profile.name,
           dataDir: profile.desktop.dataDir,
           appPath: profile.desktop.appPath,
-          claudeAppPath: profile.desktop.claudeAppPath,
+          ...launchTargetFor(profile.name, profile.desktop),
           codeConfigDir: next.code.configDir,
+          // Keep an existing gh isolation; dropping it here would strip a
+          // working GH_CONFIG_DIR while linking the Code half.
+          ghConfigDir: next.code.ghConfigDir || undefined,
         });
         copyClaudeIcon(profile.desktop.appPath, profile.desktop.claudeAppPath);
         try {

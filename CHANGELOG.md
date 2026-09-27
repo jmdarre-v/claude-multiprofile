@@ -3,6 +3,68 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## 0.1.29 (2026-09-27)
+
+### Added
+
+- Profiles no longer update themselves. Their launcher keeps them current.
+
+  Each Desktop profile runs its own copy of Claude.app, and since #9 we know
+  Claude's updater runs inside that copy. Every self-update removed the
+  profile's colour, relaunched the copy without `--user-data-dir` (so the new
+  window was on the default account while looking like the profile), and
+  shared one update state file with the main Claude. v0.1.28 made those
+  failures safe to detect; this release stops them happening.
+
+  Three layers:
+
+  1. **The copy's own updater is blocked, per profile.** Claude supports a
+     "Block auto-updates" policy (`disableAutoUpdates`) and reads it from a
+     folder named after the profile's data folder (`Claude-WORK-3p/`), so it
+     applies to that profile alone. The main Claude in `/Applications` keeps
+     updating itself. Verified before building: a test copy logged "Auto-updates
+     disabled by enterprise policy" and stayed on claude.ai rather than
+     switching to third-party inference mode. That folder is also where Claude
+     keeps a third-party inference setup, so the tool writes it only when it
+     does not exist and never edits a configuration it did not create.
+  2. **The launcher keeps the copy current.** On click it compares the copy
+     with `/Applications/Claude.app`; if the copy is behind, it rebuilds it
+     (about a second), puts the colour back, and opens it. Any failure is
+     logged and the copy opens as it is.
+  3. **The launcher catches the wrong account.** Clicking a profile whose copy
+     is already open without its profile asks whether to quit that window and
+     reopen it properly, rather than bringing the wrong window forward.
+
+  The launcher's work is done by a helper run with `osascript`, which ships
+  with macOS, because apps started from the Dock do not get the shell's PATH.
+  New profiles get all three. `doctor --fix` switches existing profiles over,
+  rebuilding launchers in place so Dock pins keep working.
+
+- `claude-multiprofile self-update [name] [on|off]` shows or changes who
+  updates a profile's copy. `off` is the default.
+
+### Fixed
+
+- **Repairing a launcher pointed it back at the shared Claude.app.** `rename`,
+  linking a Code half with `add`, enabling gh isolation, and `doctor`'s two
+  environment repairs all rebuilt the launcher against `/Applications/Claude.app`
+  instead of the profile's own copy, quietly undoing v0.1.23: no colour on the
+  running window and a new window on every click. They now share one function
+  that decides from the copy actually on disk.
+- **`rename` left the profile's copy of Claude behind**, orphaned under the old
+  name, and dropped `GH_CONFIG_DIR` from the rebuilt launcher. It now moves the
+  copy and the update settings, and keeps gh isolation.
+- **`rename` and `remove` refuse while the profile is open.** Rename moved the
+  data folder out from under a running Claude, which keeps writing to the path
+  it started with; remove deleted a running app.
+- **Copies are never rebuilt while open**, by any path. Deleting an app while
+  it runs can crash it. The launcher rebuilds it after it is quit instead.
+- **`rename` now checks reserved names**, so it can no longer point a profile at
+  `~/.claude-mem` and similar.
+- **`3p` is a reserved profile name.** Its data folder would be `Claude-3P`,
+  which on the default case-insensitive disk is the main Claude's `Claude-3p`
+  configuration folder.
+
 ## 0.1.28 (2026-09-25)
 
 ### Fixed
