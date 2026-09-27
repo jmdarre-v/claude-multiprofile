@@ -57,6 +57,7 @@ import {
 } from "../appclone.js";
 import { resyncDenyRules, auditDenyRules, readProtectionEnabled } from "../permissions.js";
 import { updateBlockState, blockUpdates, wantsUpdateBlock } from "../updates.js";
+import { recordFixPass } from "../state.js";
 import { helperState, installHelper, recentLaunchLog, HELPER_PATH, LAUNCH_LOG } from "../launchhelper.js";
 import { detectShell, rcPathForShell, readManagedAliases } from "../shell.js";
 import {
@@ -1210,6 +1211,11 @@ export async function doctor(args = []) {
       defaults.code ? "detected" : "not detected"
     }`
   );
+
+  // A completed fix pass is what brings profiles up to this version's way of
+  // working. Record it, so later commands stop reminding. Problems it could
+  // not fix are still reported above and by the next doctor run.
+  if (fix) recordFixPass(currentVersion === "unknown" ? null : currentVersion);
 
   console.log("");
   if (t.problems === 0 && t.warnings === 0) {

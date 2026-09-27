@@ -3,6 +3,42 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## 0.1.30 (2026-09-27)
+
+### Changed
+
+- `upgrade` now applies the new version's changes to your profiles too, in
+  one step. After installing and verifying, it runs the new version's
+  `doctor --fix`. `--no-fix` stops after the install.
+
+  Installing only replaces the code. The launch helper, rebuilt launchers and
+  moving profiles over to a new way of working all happen in `doctor --fix`,
+  so upgrading used to be two steps, and the second was easy to miss. v0.1.29
+  showed the worse case: the first step quietly installed the old version,
+  the second then ran as the old version, and it reported "No problems found"
+  with not a single profile switched over.
+
+  The first release to use this is the one after 0.1.30. The upgrade that
+  installs 0.1.30 is still run by 0.1.29's code.
+
+- Every command reminds you when the installed version's changes have not
+  reached your profiles yet, for example after a plain `npm install -g`. The
+  tool records which version's `doctor --fix` last ran, in `state.json` next to
+  the registry. It is a reminder, not an automatic repair: rebuilding launchers
+  as a side effect of `list` would be surprising. `upgrade` on an already
+  current version applies any changes still pending.
+
+### Fixed
+
+- `upgrade` could reinstall the version you already had. It looked up the
+  latest version with `npm view`, then installed `@latest`, which npm answered
+  from its local cache: in the minutes after a release that still pointed at
+  the previous version. It now installs the exact version it found and asks
+  the registry rather than the cache.
+- When the installed version did not match, `upgrade` always blamed PATH
+  ("landed in a different Node version's global directory"). It now checks
+  what npm actually installed, and tells the two cases apart.
+
 ## 0.1.29 (2026-09-27)
 
 ### Added

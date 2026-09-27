@@ -35,7 +35,9 @@ Both work. Both are fiddly to set up and easy to mess up. This tool automates th
 npm install -g claude-multiprofile
 ```
 
-To upgrade later, run `claude-multiprofile upgrade` (or re-run the install command above).
+To upgrade later, run `claude-multiprofile upgrade`. It installs the latest version and then applies that version's changes to your existing profiles (the same as `doctor --fix`), in one step. Add `--no-fix` to install only.
+
+Re-running the install command above also works, but it only replaces the code: new launchers, the launch helper and similar changes reach your profiles through `doctor --fix`. Until that has run, every command reminds you.
 
 ### Install the latest unreleased commit
 
@@ -268,6 +270,14 @@ claude-multiprofile self-update              # every profile's mode
 claude-multiprofile self-update work on      # let Claude update it itself
 claude-multiprofile self-update work off     # back to the default
 ```
+
+### `claude-multiprofile upgrade [--no-fix]`
+
+Upgrades to the latest version on npm and applies its changes to your profiles, in one step.
+
+It installs the exact version it found (not `@latest`, which npm can answer from a stale cache in the minutes after a release) and then checks what actually landed. If npm installed an older version, it says so and asks you to retry in a minute. If the new version landed in a different Node version's folder than the one your shell uses (common with nvm), it says that instead, and applies nothing until PATH is sorted. When everything checks out, it runs the new version's `doctor --fix`, so launchers, the launch helper and profile settings are brought up to date. `--no-fix` stops after the install.
+
+If you are already on the latest version but its changes were never applied (for example, you upgraded with plain `npm install -g`), `upgrade` applies them.
 
 ### `claude-multiprofile help` / `--version`
 

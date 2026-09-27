@@ -34,6 +34,7 @@ import {
   titleCase,
 } from "../util.js";
 import { findProfile, addToRegistry, getRegistry, replaceProfile } from "../registry.js";
+import { readState, recordFixPass, toolVersion } from "../state.js";
 import { resyncDenyRules } from "../permissions.js";
 import {
   findClaudeApp,
@@ -289,6 +290,14 @@ export async function add() {
       : null,
     createdAt: new Date().toISOString(),
   });
+
+  // A first profile is built by this version from scratch, so there is
+  // nothing older to bring up to date. Record that, or the very next command
+  // would remind a brand-new user to run doctor --fix. With older profiles
+  // present, leave the record alone: they may still need this version's fixes.
+  if (getRegistry().profiles.length === 1 && !readState().fixesAppliedFor) {
+    recordFixPass(toolVersion());
+  }
 
   // ---- Cross-profile read protection (issue #4) ------------------------
   //

@@ -1499,3 +1499,32 @@ test("launch helper: never opens something that is not Claude", async (t) => {
     { encoding: "utf8", env: { ...process.env, CMP_LAUNCH_DRY_RUN: "1" } }).trim();
   assert.equal(out, "refused: not Claude");
 });
+
+// ---------------------------------------------------------------------------
+// state.js and upgrade.js - installing is not the same as applying
+// ---------------------------------------------------------------------------
+
+test("fixPassDue: reminds until the installed version's fixes have run", async () => {
+  const { fixPassDue } = await import("../src/state.js");
+  // The v0.1.29 case: upgraded, profiles present, fixes never applied.
+  assert.equal(fixPassDue("0.1.30", 1, undefined), true, "profiles older than the record itself");
+  assert.equal(fixPassDue("0.1.30", 1, "0.1.29"), true);
+  assert.equal(fixPassDue("0.1.30", 1, "0.1.30"), false);
+  // Numeric: 0.1.9 applied, 0.1.10 installed, is behind.
+  assert.equal(fixPassDue("0.1.10", 2, "0.1.9"), true);
+  // Nothing to apply without profiles, and never nag on an unknown version.
+  assert.equal(fixPassDue("0.1.30", 0, undefined), false);
+  assert.equal(fixPassDue(null, 3, "0.1.1"), false);
+  // Running an older build than the one last applied is not a reason to nag.
+  assert.equal(fixPassDue("0.1.29", 1, "0.1.30"), false);
+});
+
+test("upgrade installArgs: the exact version it looked up, asked of the registry", async () => {
+  const { installArgs } = await import("../src/commands/upgrade.js");
+  const a = installArgs("0.1.30");
+  // Resolving "latest" a second time let npm answer from a stale cache and
+  // reinstall the previous version.
+  assert.ok(a.includes("claude-multiprofile@0.1.30"));
+  assert.ok(!a.some((x) => x.endsWith("@latest")));
+  assert.ok(a.includes("--prefer-online"));
+});

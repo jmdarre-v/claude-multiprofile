@@ -18,7 +18,9 @@ import { repair } from "./commands/repair.js";
 import { selfUpdate } from "./commands/selfupdate.js";
 import { status } from "./commands/status.js";
 import { upgrade } from "./commands/upgrade.js";
-import { err } from "./util.js";
+import { err, info, command } from "./util.js";
+import { getRegistry } from "./registry.js";
+import { fixPassDue, readState } from "./state.js";
 
 // Read the version from package.json at runtime so we don't have to
 // remember to keep it in sync with the manifest. The path resolves
@@ -52,7 +54,8 @@ COMMANDS
   self-update [name] [on|off]
                          Whether a profile's copy of Claude updates itself
                          (off by default: its launcher keeps it current)
-  upgrade                Upgrade claude-multiprofile to the latest version on npm
+  upgrade [--no-fix]     Upgrade to the latest version on npm, then apply its
+                         changes to your profiles (--no-fix: install only)
   help                   Show this help
   version                Show the installed version
 
@@ -97,6 +100,21 @@ async function pickCommand() {
   });
 }
 
+// `npm install -g` replaces the code but applies nothing to existing profiles
+// (see src/state.js). Say so once per command, until doctor --fix has run.
+// doctor and upgrade handle it themselves; help and version stay clean.
+function remindIfFixesPending(cmd) {
+  if (["doctor", "upgrade", "help", "version"].includes(cmd)) return;
+  try {
+    if (!fixPassDue(VERSION, getRegistry().profiles.length, readState().fixesAppliedFor)) return;
+  } catch {
+    return;
+  }
+  info(`claude-multiprofile is now ${VERSION}, and its changes have not been applied to your profiles yet.`);
+  info(`Run ${command("claude-multiprofile doctor --fix")} to apply them.`);
+  console.log("");
+}
+
 export async function run(argv) {
   let cmd = argv[0];
   let rest = argv.slice(1);
@@ -115,6 +133,7 @@ export async function run(argv) {
   // No command? Drop into the interactive menu. Wrapped in try/catch so
   // Ctrl+C at the menu prompt exits cleanly rather than printing a stack.
   if (!cmd) {
+    remindIfFixesPending(null);
     try {
       cmd = await pickCommand();
     } catch (e) {
@@ -131,6 +150,8 @@ export async function run(argv) {
     }
     rest = [];
   }
+
+  if (argv[0]) remindIfFixesPending(cmd);
 
   const handlers = { add, list, status, doctor, extensions, rename, repair, remove, upgrade, "self-update": selfUpdate };
   const handler = handlers[cmd];

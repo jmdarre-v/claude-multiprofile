@@ -22,6 +22,11 @@ const CONFIG_HOME = process.env.XDG_CONFIG_HOME || path.join(HOME, ".config");
 const REGISTRY_DIR = path.join(CONFIG_HOME, "claude-multiprofile");
 const REGISTRY_PATH = path.join(REGISTRY_DIR, "profiles.json");
 
+// The tool's config folder, for the few files that sit beside the registry.
+export function configDir() {
+  return REGISTRY_DIR;
+}
+
 const EMPTY_REGISTRY = {
   // Bumping this lets us migrate the file shape if we ever need to.
   version: 1,
