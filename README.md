@@ -414,15 +414,21 @@ The Code half works fine on Linux, the Desktop half doesn't (Claude Desktop is m
 
 ## Comparison with similar tools
 
-| Tool | Desktop | Code | Mac | Linux | Notes |
-|------|---------|------|-----|-------|-------|
-| claude-multiprofile (this) | yes | yes | yes | partial | Single tool for both, interactive wizard |
-| [aimux](https://github.com/Digital-Threads/aimux) | no | yes | yes | yes | Code only, also handles symlink-sharing |
-| [aisw](https://crates.io/crates/aisw) | no | yes | yes | yes | Rust binary, also covers Codex CLI and Gemini CLI |
-| [Jean-Claude](https://madewithlove.com/blog/running-multiple-claude-accounts-without-logging-out/) | no | yes | yes | yes | Cross-machine sync, opinionated dotfiles |
-| Manual setup | yes | yes | yes | yes | Documented in [several](https://daring-designs.com/blog/how-to-run-multiple-claude-code-accounts-side-by-side) [places](https://wmedia.es/en/tips/claude-code-multiple-profiles-config-dir) |
+Several good tools work on this problem, and they make different trade-offs. The main one is whether accounts run **side by side**, each in its own window or terminal at the same time, or whether you **switch** one active account. Each row below is based on that project's own README as of September 2026.
 
-The pitch for this tool over the others: it's the only one that handles Claude Desktop alongside Claude Code in a single command, and the interactive wizard means you don't have to remember the right flags or know in advance where files should go.
+| Tool | Desktop | Code | Accounts at once | Notes |
+|------|---------|------|------------------|-------|
+| claude-multiprofile (this) | yes | yes | side by side, Desktop and Code | Interactive wizard; per-profile GitHub CLI login; `doctor --fix`; each Desktop profile kept current on launch |
+| [Claude Profiles](https://github.com/ajipurn/claude-profiles) | yes | yes | switch | Menu bar app; per-account usage limits read from Claude's local cache |
+| [claude-profiles](https://github.com/calebbarzee/claude-profiles) | yes | sessions | side by side, Desktop | Moves Claude Code sessions into Desktop profiles; `backup`, `undo`, `--dry-run` |
+| [claude-desktop-profiles](https://github.com/odahcam/claude-desktop-profiles) | yes | no | side by side, Desktop | Per-profile Dock colours |
+| [aimux](https://github.com/Digital-Threads/aimux) | no | yes | side by side | `doctor`, live usage in `status`, shares files between profiles with symlinks |
+| [aisw](https://github.com/burakdede/aisw) | no | yes | switch | Also Codex CLI, Gemini CLI and Antigravity CLI |
+| Manual setup | yes | yes | side by side | Documented in [several](https://daring-designs.com/blog/how-to-run-multiple-claude-code-accounts-side-by-side) [places](https://wmedia.es/en/tips/claude-code-multiple-profiles-config-dir) |
+
+[Jean-Claude](https://madewithlove.com/blog/running-multiple-claude-accounts-without-logging-out/) is a dotfiles approach for Claude Code with cross-machine sync, described in a blog post rather than shipped as a tool.
+
+Where this one fits: if you want Claude Desktop **and** Claude Code for several accounts open at the same time, with each profile's GitHub login following along, and a `doctor` that keeps all of it working as Claude updates itself. If you only use Claude Code, or prefer switching one active account, the tools above may suit you better.
 
 ## Profile isolation
 

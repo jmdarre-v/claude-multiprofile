@@ -60,6 +60,11 @@ project is pre-1.0, so minor breakage may occur between 0.x releases.
 - The walkthrough is updated to what the wizard prints today.
 - Removed a release tarball from v0.1.4 that had been committed to the
   repository.
+- The README's comparison with similar tools no longer claims this is the
+  only one handling Claude Desktop alongside Claude Code; that stopped being
+  true. The table now compares what each tool actually does, checked against
+  each project's own README: Desktop, Code, and whether accounts run side by
+  side or you switch one active account.
 
 ## 0.1.30 (2026-09-27)
 
