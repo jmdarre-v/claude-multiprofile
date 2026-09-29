@@ -109,6 +109,75 @@ export function ensureDataDir(dataDir) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
+// ---- MCP connectors ------------------------------------------------
+//
+// Desktop reads its MCP connectors from
+// <user-data-dir>/claude_desktop_config.json, so a fresh profile starts with
+// none of the servers the default profile has. Claude Code profiles get theirs
+// from seedConfigDir() in src/code.js; this is the Desktop half of that idea.
+//
+// That file is not only connectors: it also holds `preferences` and whatever
+// servers the user added by hand in this profile. So update the mcpServers map
+// rather than overwrite the file, and refuse to touch a config we cannot
+// parse - a hand-made file is worth more than the convenience.
+
+export const DEFAULT_DESKTOP_CONFIG_FILE = path.join(
+  DEFAULT_CLAUDE_DATA_PARENT,
+  "Claude",
+  "claude_desktop_config.json"
+);
+
+export function desktopConfigFile(dataDir) {
+  return path.join(dataDir, "claude_desktop_config.json");
+}
+
+// Returns { status, added, total }, where status is one of:
+//   "seeded"  - servers were written into the profile
+//   "current" - the profile already had every server
+//   "none"    - nothing to copy: no readable source servers
+//   "foreign" - the profile has a config we could not parse; left alone
+export function seedDesktopMcpServers(
+  dataDir,
+  { sourceFile = DEFAULT_DESKTOP_CONFIG_FILE } = {}
+) {
+  const nothing = { status: "none", added: [], total: 0 };
+  let servers;
+  try {
+    servers = JSON.parse(fs.readFileSync(sourceFile, "utf8")).mcpServers;
+  } catch {
+    return nothing;
+  }
+  if (!servers || typeof servers !== "object" || Array.isArray(servers)) return nothing;
+  if (Object.keys(servers).length === 0) return nothing;
+
+  const file = desktopConfigFile(dataDir);
+  let config = {};
+  if (fileExists(file)) {
+    try {
+      config = JSON.parse(fs.readFileSync(file, "utf8"));
+    } catch {
+      return { status: "foreign", added: [], total: 0 };
+    }
+    if (!config || typeof config !== "object" || Array.isArray(config)) {
+      return { status: "foreign", added: [], total: 0 };
+    }
+  }
+
+  const existing =
+    config.mcpServers && typeof config.mcpServers === "object" && !Array.isArray(config.mcpServers)
+      ? config.mcpServers
+      : {};
+  const merged = { ...existing, ...servers };
+  const total = Object.keys(merged).length;
+  if (JSON.stringify(existing) === JSON.stringify(merged)) {
+    return { status: "current", added: [], total };
+  }
+  const added = Object.keys(servers).filter((k) => !(k in existing));
+  config.mcpServers = merged;
+  fs.writeFileSync(file, JSON.stringify(config, null, 2) + "\n", "utf8");
+  return { status: "seeded", added, total };
+}
+
 // ---- .app bundle generation ----------------------------------------
 
 export function buildLaunchAppleScript(dataDir, claudeAppPath, codeConfigDir, ghConfigDir, dedicatedBundle = false, helper = null) {
@@ -632,6 +701,19 @@ export function setupDesktop({
 
   ensureDataDir(dataDir);
   ok("Data folder ready.");
+
+  // Carry the default profile's MCP connectors over. Without this the profile
+  // opens with no connectors at all, which reads as a bug to anyone who had
+  // them configured.
+  const mcp = seedDesktopMcpServers(dataDir);
+  if (mcp.status === "seeded") {
+    ok(`MCP connectors copied from your default profile: ${mcp.added.length} added, ${mcp.total} in total.`);
+  } else if (mcp.status === "current") {
+    ok(`MCP connectors already in place (${mcp.total}).`);
+  } else if (mcp.status === "foreign") {
+    warn("This data folder's claude_desktop_config.json could not be parsed; left it alone.");
+    info(`  Its connectors stay as they are. ${command("claude-multiprofile doctor")} re-checks this.`);
+  }
 
   // A colour means the launcher opens a per-profile CLONE of Claude.app that
   // carries the tint, rather than the shared /Applications/Claude.app. That is

@@ -1633,3 +1633,87 @@ test("copiedTranscripts and pathsIntoOtherProfile: what doctor reports about old
   assert.deepEqual(pathsIntoOtherProfile(manifest, a, b), { rebasable: 1, stuck: 1 });
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+// ---------------------------------------------------------------------------
+// desktop.js - MCP connectors for a Desktop profile
+// ---------------------------------------------------------------------------
+
+function fakeDesktopSource(root, servers) {
+  const src = path.join(root, "source.json");
+  fs.writeFileSync(src, JSON.stringify({ preferences: { theme: "dark" }, mcpServers: servers }));
+  return src;
+}
+
+test("seedDesktopMcpServers: a fresh profile gets the default profile's connectors", async () => {
+  const { seedDesktopMcpServers, desktopConfigFile } = await import("../src/desktop.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-dmcp-"));
+  const sourceFile = fakeDesktopSource(root, { atlassian: { command: "uvx" }, zeplin: { command: "npx" } });
+  const dataDir = path.join(root, "Claude-WORK");
+  fs.mkdirSync(dataDir);
+
+  const r = seedDesktopMcpServers(dataDir, { sourceFile });
+  assert.equal(r.status, "seeded");
+  assert.deepEqual(r.added.sort(), ["atlassian", "zeplin"]);
+  assert.equal(r.total, 2);
+  const written = JSON.parse(fs.readFileSync(desktopConfigFile(dataDir), "utf8"));
+  assert.deepEqual(Object.keys(written.mcpServers).sort(), ["atlassian", "zeplin"]);
+  // The source's preferences are the default profile's, not this one's.
+  assert.equal("preferences" in written, false);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("seedDesktopMcpServers: the profile's own preferences and hand-added servers survive", async () => {
+  const { seedDesktopMcpServers, desktopConfigFile } = await import("../src/desktop.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-dmcp-"));
+  const sourceFile = fakeDesktopSource(root, { atlassian: { command: "uvx" } });
+  const dataDir = path.join(root, "Claude-WORK");
+  fs.mkdirSync(dataDir);
+  fs.writeFileSync(
+    desktopConfigFile(dataDir),
+    JSON.stringify({ preferences: { locale: "it" }, mcpServers: { mine: { command: "x" } } })
+  );
+
+  const r = seedDesktopMcpServers(dataDir, { sourceFile });
+  assert.equal(r.status, "seeded");
+  assert.deepEqual(r.added, ["atlassian"]);
+  const written = JSON.parse(fs.readFileSync(desktopConfigFile(dataDir), "utf8"));
+  assert.deepEqual(written.preferences, { locale: "it" });
+  assert.deepEqual(Object.keys(written.mcpServers).sort(), ["atlassian", "mine"]);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("seedDesktopMcpServers: idempotent, and a nothing-to-do source is not an error", async () => {
+  const { seedDesktopMcpServers } = await import("../src/desktop.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-dmcp-"));
+  const sourceFile = fakeDesktopSource(root, { atlassian: { command: "uvx" } });
+  const dataDir = path.join(root, "Claude-WORK");
+  fs.mkdirSync(dataDir);
+
+  assert.equal(seedDesktopMcpServers(dataDir, { sourceFile }).status, "seeded");
+  const second = seedDesktopMcpServers(dataDir, { sourceFile });
+  assert.equal(second.status, "current");
+  assert.equal(second.total, 1);
+
+  const empty = fakeDesktopSource(root, {});
+  assert.equal(seedDesktopMcpServers(dataDir, { sourceFile: empty }).status, "none");
+  assert.equal(
+    seedDesktopMcpServers(dataDir, { sourceFile: path.join(root, "nope.json") }).status,
+    "none"
+  );
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("seedDesktopMcpServers: a config we cannot parse is reported, never rewritten", async () => {
+  const { seedDesktopMcpServers, desktopConfigFile } = await import("../src/desktop.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-dmcp-"));
+  const sourceFile = fakeDesktopSource(root, { atlassian: { command: "uvx" } });
+  const dataDir = path.join(root, "Claude-WORK");
+  fs.mkdirSync(dataDir);
+  const target = desktopConfigFile(dataDir);
+  fs.writeFileSync(target, "{ not json");
+
+  const r = seedDesktopMcpServers(dataDir, { sourceFile });
+  assert.equal(r.status, "foreign");
+  assert.equal(fs.readFileSync(target, "utf8"), "{ not json");
+  fs.rmSync(root, { recursive: true, force: true });
+});
