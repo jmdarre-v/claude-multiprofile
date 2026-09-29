@@ -42,6 +42,10 @@ import {
   copyClaudeIcon,
   findClaudeApp,
   DEFAULT_APPLET_BUNDLE_ID,
+  DEFAULT_DESKTOP_CONFIG_FILE,
+  desktopConfigFile,
+  seedDesktopMcpServers,
+  dataDirInUse,
 } from "../desktop.js";
 import {
   DEFAULT_CLAUDE_CONFIG_DIR,
@@ -895,6 +899,83 @@ function checkSeededProfiles(t, reg, fix) {
   }
 }
 
+// ---- Check: Desktop MCP connectors -------------------------------------------
+//
+// Desktop reads connectors from <data dir>/claude_desktop_config.json. Seeding
+// them at creation is a snapshot, and the default profile keeps moving: add a
+// connector there next month and the profiles created today will not have it.
+// Profiles created before seeding existed have none at all.
+
+function checkDesktopConnectors(t, reg, fix) {
+  const desktop = reg.profiles.filter(
+    (p) => p.desktop && p.desktop.dataDir && fileExists(p.desktop.dataDir)
+  );
+  if (desktop.length === 0 || !fileExists(DEFAULT_DESKTOP_CONFIG_FILE)) return;
+
+  let wanted = [];
+  try {
+    const s = JSON.parse(fs.readFileSync(DEFAULT_DESKTOP_CONFIG_FILE, "utf8")).mcpServers;
+    wanted = s && typeof s === "object" && !Array.isArray(s) ? Object.keys(s) : [];
+  } catch {
+    // Default profile's own config is unreadable: not this check's business.
+    return;
+  }
+  if (wanted.length === 0) return;
+
+  step("Desktop MCP connectors");
+  for (const p of desktop) {
+    const file = desktopConfigFile(p.desktop.dataDir);
+    let have = null;
+    if (fileExists(file)) {
+      try {
+        const c = JSON.parse(fs.readFileSync(file, "utf8"));
+        have =
+          c && typeof c.mcpServers === "object" && c.mcpServers && !Array.isArray(c.mcpServers)
+            ? Object.keys(c.mcpServers)
+            : [];
+      } catch {
+        warn(`${p.name}: claude_desktop_config.json is not valid JSON, so it was left alone.`);
+        info(`  Fix the JSON by hand (${tildify(file)}), then re-run this check.`);
+        t.warnings++;
+        continue;
+      }
+    } else {
+      have = [];
+    }
+
+    const missing = wanted.filter((k) => !have.includes(k));
+    if (missing.length === 0) {
+      ok(`${p.name}: has every connector your default profile has (${have.length}).`);
+      continue;
+    }
+    warn(
+      `${p.name}: missing ${missing.length} connector${missing.length === 1 ? "" : "s"} your default profile has (${missing.join(", ")}).`
+    );
+    if (fix) {
+      // Claude owns this file while it runs: it flushes its own config over it,
+      // and a write made behind a running instance is gone at the next flush.
+      // Observed on 2.9939.4: five servers written into a live profile were
+      // dropped nine minutes later, when the app wrote the file back.
+      if (dataDirInUse(p.desktop.dataDir)) {
+        warn("  This profile's Claude is running, so a copy now would be overwritten.");
+        info("  Quit it, then re-run `claude-multiprofile doctor --fix`.");
+        t.warnings++;
+        continue;
+      }
+      const r = seedDesktopMcpServers(p.desktop.dataDir);
+      if (r.status === "seeded") {
+        ok(`  Copied ${r.added.length}. Restart this profile's Claude to load them.`);
+      } else {
+        warn(`  Could not copy them (${r.status}).`);
+        t.warnings++;
+      }
+    } else {
+      info(`  Copy them with ${command("claude-multiprofile doctor --fix")}`);
+      t.warnings++;
+    }
+  }
+}
+
 // ---- Check: managed updates --------------------------------------------------
 //
 // Since v0.1.29 a profile's copy of Claude does not update itself. Its
@@ -1271,6 +1352,7 @@ export async function doctor(args = []) {
   checkDesktopLaunchPath(t, reg);
   checkGhIsolation(t, reg, fix);
   checkSeededProfiles(t, reg, fix);
+  checkDesktopConnectors(t, reg, fix);
   checkDenyRules(t, reg, fix);
 
   // ---- Summary -------------------------------------------------------------

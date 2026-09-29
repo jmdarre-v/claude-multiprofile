@@ -3,6 +3,26 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## Unreleased
+
+### Added
+
+- **Desktop profiles start with the MCP connectors you already had.** Desktop
+  reads its connectors from `claude_desktop_config.json` inside the
+  `--user-data-dir`, so a new profile opened with none of them: every
+  connector configured in the default profile was missing, with no command to
+  carry them over. Code profiles already got theirs from `seedConfigDir()`.
+  `add` now copies the `mcpServers` map from the default profile's Desktop
+  config, and `doctor` compares each profile against it afterwards, since
+  copying at creation is only a snapshot: `--fix` copies over what is missing.
+  The map is updated rather than the file replaced, because that file also
+  holds `preferences` and may hold servers added by hand in that profile; a
+  config that does not parse is reported and left untouched.
+  `--fix` skips a profile whose Claude is running: the app rewrites that file
+  from its own state, so a copy made behind a live instance is gone at the
+  next flush. Seeding at creation is unaffected, because nothing is running on
+  a profile being created.
+
 ## 0.1.31 (2026-09-27)
 
 ### Fixed
