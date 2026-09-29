@@ -18,6 +18,10 @@ project is pre-1.0, so minor breakage may occur between 0.x releases.
   The map is updated rather than the file replaced, because that file also
   holds `preferences` and may hold servers added by hand in that profile; a
   config that does not parse is reported and left untouched.
+  `--fix` skips a profile whose Claude is running: the app rewrites that file
+  from its own state, so a copy made behind a live instance is gone at the
+  next flush. Seeding at creation is unaffected, because nothing is running on
+  a profile being created.
 
 ## 0.1.31 (2026-09-27)
 

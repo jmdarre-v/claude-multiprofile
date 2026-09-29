@@ -45,6 +45,7 @@ import {
   DEFAULT_DESKTOP_CONFIG_FILE,
   desktopConfigFile,
   seedDesktopMcpServers,
+  dataDirInUse,
 } from "../desktop.js";
 import {
   DEFAULT_CLAUDE_CONFIG_DIR,
@@ -951,6 +952,16 @@ function checkDesktopConnectors(t, reg, fix) {
       `${p.name}: missing ${missing.length} connector${missing.length === 1 ? "" : "s"} your default profile has (${missing.join(", ")}).`
     );
     if (fix) {
+      // Claude owns this file while it runs: it flushes its own config over it,
+      // and a write made behind a running instance is gone at the next flush.
+      // Observed on 2.9939.4: five servers written into a live profile were
+      // dropped nine minutes later, when the app wrote the file back.
+      if (dataDirInUse(p.desktop.dataDir)) {
+        warn("  This profile's Claude is running, so a copy now would be overwritten.");
+        info("  Quit it, then re-run `claude-multiprofile doctor --fix`.");
+        t.warnings++;
+        continue;
+      }
       const r = seedDesktopMcpServers(p.desktop.dataDir);
       if (r.status === "seeded") {
         ok(`  Copied ${r.added.length}. Restart this profile's Claude to load them.`);

@@ -120,6 +120,11 @@ export function ensureDataDir(dataDir) {
 // servers the user added by hand in this profile. So update the mcpServers map
 // rather than overwrite the file, and refuse to touch a config we cannot
 // parse - a hand-made file is worth more than the convenience.
+//
+// Timing matters: Claude rewrites this file from its own state while it runs,
+// so a write behind a live instance is lost at the next flush. Seeding here is
+// safe because the profile is being created and nothing is running on it yet;
+// the doctor check that repairs an existing profile guards with dataDirInUse.
 
 export const DEFAULT_DESKTOP_CONFIG_FILE = path.join(
   DEFAULT_CLAUDE_DATA_PARENT,
