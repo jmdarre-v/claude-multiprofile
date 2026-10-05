@@ -40,9 +40,10 @@ COMMANDS
   add                    Create a new profile (interactive wizard)
   list                   List configured profiles
   status                 Health-check all configured profiles
-  doctor [--fix]         Diagnose the whole setup: which claude wins on PATH,
+  doctor [--fix|--undo]  Diagnose the whole setup: which claude wins on PATH,
                          broken npm installs, directory collisions, and
-                         cross-profile read protection (--fix repairs drift)
+                         cross-profile read protection (--fix repairs drift;
+                         --undo puts back what the last --fix changed)
   extensions             Copy Claude Desktop extensions and MCP connectors
                          between profiles
                          (interactive: pick source, then target)

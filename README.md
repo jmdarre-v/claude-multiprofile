@@ -215,7 +215,7 @@ It also checks whether the terminal you are standing in agrees with the file. A 
 
 This needs to know when the aliases last changed, which is not the same as when the rc file was last touched, since installers and you edit dotfiles for unrelated reasons. The managed block therefore carries its own timestamp, written only when the aliases actually change. Blocks written before v0.1.27 have no timestamp, so the check stays quiet for them until the next time your aliases change.
 
-### `claude-multiprofile doctor [--fix]`
+### `claude-multiprofile doctor [--fix] [--undo]`
 
 Diagnoses the machine, not just the registry. Where `status` asks "is each profile's paperwork in order?", `doctor` asks "will these profiles actually behave?"
 
@@ -234,6 +234,8 @@ It checks:
 - **Cross-profile read protection** drift (see [Profile isolation](#profile-isolation) below).
 
 `--fix` repairs what's safe to repair automatically: deny-rule drift, default bundle IDs, launchers missing `CLAUDE_CONFIG_DIR`, a lost colour, a missing or outdated launch helper, launchers that do not use it, and profiles whose copy still updates itself. It never rebuilds a copy that is open, because deleting an app while it runs can crash it. Everything else is reported with the command to run.
+
+**Every `--fix` run can be undone.** Before changing anything, `--fix` records the files it may edit: each Code profile's `settings.json` and plugin manifests, each launcher's script, plist and icon, the launch helper, and the update-block folders it creates. After the run it keeps only what actually changed, and tells you when it changed something. `claude-multiprofile doctor --undo` puts back the most recent run's changes; run it again to go one run further back. A file you've edited since that run is left alone unless you add `--force`. Not covered: rebuilt copies of Claude.app, re-applied colours, and a launcher's removed icon catalog, which are rebuilt rather than edited and which `--fix` redoes. This matters because `upgrade` runs `--fix` on its own, so a repair rule that turns out to be wrong reaches you without being asked; the last ten runs are kept in `~/.config/claude-multiprofile/snapshots/`.
 
 ### `claude-multiprofile rename [old] [new]`
 

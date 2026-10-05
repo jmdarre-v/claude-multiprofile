@@ -1831,3 +1831,54 @@ test("seedConfigDir: a new profile keeps claudeMdExcludes pointing where it poin
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dst, "settings.json"), "utf8")).claudeMdExcludes, [`${src}/CLAUDE.md`]);
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+// ---------------------------------------------------------------------------
+// snapshot.js - doctor --fix can be undone
+// ---------------------------------------------------------------------------
+//
+// Driven through the real CLI in a sandboxed HOME and config folder, because
+// the point is the round trip: what --fix changed, --undo puts back.
+
+test("doctor --undo puts back what doctor --fix changed, and never clobbers later edits", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-undo-"));
+  const home = path.join(root, "home");
+  const cfg = path.join(root, "config");
+  const work = path.join(home, ".claude-work");
+  for (const d of [path.join(home, ".claude"), work]) {
+    fs.mkdirSync(d, { recursive: true });
+    fs.writeFileSync(path.join(d, "CLAUDE.md"), "x");
+  }
+  const settings = path.join(work, "settings.json");
+  // The state v0.1.31's --fix left behind (#10): something --fix now changes.
+  const damaged = JSON.stringify({ claudeMdExcludes: [path.join(work, "CLAUDE.md")] });
+  fs.writeFileSync(settings, damaged);
+  fs.mkdirSync(path.join(cfg, "claude-multiprofile"), { recursive: true });
+  fs.writeFileSync(path.join(cfg, "claude-multiprofile", "profiles.json"), JSON.stringify({
+    version: 1,
+    profiles: [{ name: "work", type: "code", desktop: null, code: { configDir: work, aliasName: "claude-work", shell: "zsh", rcPath: path.join(home, ".zshrc") } }],
+  }));
+  const run = (...args) => execFileSync(process.execPath, [path.resolve("bin/claude-multiprofile.js"), "doctor", ...args], {
+    encoding: "utf8",
+    env: { ...process.env, HOME: home, XDG_CONFIG_HOME: cfg, NO_COLOR: "1" },
+    timeout: 60_000,
+  });
+
+  const fixed = run("--fix");
+  assert.match(fixed, /doctor --undo/, "a run that changed files says how to undo it");
+  assert.notEqual(fs.readFileSync(settings, "utf8"), damaged, "--fix changed the file");
+
+  run("--undo");
+  assert.equal(fs.readFileSync(settings, "utf8"), damaged, "--undo restored it byte for byte");
+  assert.match(run("--undo"), /Nothing to undo/, "and that snapshot is used up");
+
+  // An edit made after the fix is never overwritten without --force.
+  run("--fix");
+  fs.writeFileSync(settings, JSON.stringify({ claudeMdExcludes: [], mine: true }));
+  assert.match(run("--undo"), /changed since that run/);
+  assert.match(fs.readFileSync(settings, "utf8"), /"mine":true/);
+  run("--undo", "--force");
+  assert.equal(fs.readFileSync(settings, "utf8"), damaged);
+
+  fs.rmSync(root, { recursive: true, force: true });
+});

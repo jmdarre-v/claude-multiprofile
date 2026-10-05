@@ -68,6 +68,7 @@ import {
 import { resyncDenyRules, auditDenyRules, readProtectionEnabled } from "../permissions.js";
 import { updateBlockState, blockUpdates, wantsUpdateBlock } from "../updates.js";
 import { recordFixPass } from "../state.js";
+import { takeSnapshot, finishSnapshot, fixTargets, undoLatest } from "../snapshot.js";
 import { helperState, installHelper, recentLaunchLog, HELPER_PATH, LAUNCH_LOG } from "../launchhelper.js";
 import { detectShell, rcPathForShell, readManagedAliases } from "../shell.js";
 import {
@@ -1320,12 +1321,50 @@ function checkDenyRules(t, reg, fix) {
 
 // ---- Top-level -------------------------------------------------------------
 
+// `doctor --undo`: put back what the most recent `doctor --fix` changed.
+function undoLastFix(args) {
+  const r = undoLatest({ force: args.includes("--force") });
+  if (!r) {
+    info("Nothing to undo: no doctor --fix run has a snapshot.");
+    return;
+  }
+  step(`Undoing the doctor --fix run from ${new Date(r.at).toLocaleString()}`);
+  for (const f of r.restored) ok(`Restored ${tildify(f)}`);
+  for (const f of r.removed) ok(`Removed ${tildify(f)} (that run created it)`);
+  for (const s of r.skipped) warn(`Left ${tildify(s.path)} alone: ${s.why}.`);
+  if (r.skipped.length > 0) {
+    info(`  Use ${command("claude-multiprofile doctor --undo --force")} to put those back anyway.`);
+  }
+  // A launcher whose script or plist came back needs macOS to re-read it.
+  const launchers = new Set();
+  for (const f of r.restored) {
+    const m = f.match(/^(.*?\.app)\/Contents\//);
+    if (m) launchers.add(m[1]);
+  }
+  for (const a of launchers) refreshLauncher(a);
+  console.log("");
+  info("Not part of an undo: rebuilt copies of Claude.app, re-applied colours, and a launcher's");
+  info("removed icon catalog. Those are rebuilt rather than edited, and doctor --fix redoes them.");
+}
+
 export async function doctor(args = []) {
   header("claude-multiprofile doctor");
+
+  if (args.includes("--undo")) return undoLastFix(args);
 
   const fix = args.includes("--fix");
   const t = makeTally();
   const reg = getRegistry();
+
+  // Before any check can change anything: record what --fix may touch.
+  let snap = null;
+  if (fix) {
+    try {
+      snap = takeSnapshot(fixTargets(reg));
+    } catch (e) {
+      warn(`Could not take a snapshot before fixing (${e.message}); this run cannot be undone.`);
+    }
+  }
 
   // Version of this tool, read the same way cli.js does.
   let currentVersion = "unknown";
@@ -1381,6 +1420,22 @@ export async function doctor(args = []) {
   // working. Record it, so later commands stop reminding. Problems it could
   // not fix are still reported above and by the next doctor run.
   if (fix) recordFixPass(currentVersion === "unknown" ? null : currentVersion);
+
+  if (snap) {
+    let changed = [];
+    try {
+      changed = finishSnapshot(snap);
+    } catch {
+      // The fixes stand; only the undo record is lost.
+    }
+    // state.json alone is bookkeeping, not a change worth undoing.
+    const real = changed.filter((f) => !f.endsWith(`${path.sep}state.json`));
+    if (real.length === 0 && changed.length > 0) fs.rmSync(snap.dir, { recursive: true, force: true });
+    if (real.length > 0) {
+      console.log("");
+      info(`--fix changed ${real.length} file${real.length === 1 ? "" : "s"}. To put ${real.length === 1 ? "it" : "them"} back: ${command("claude-multiprofile doctor --undo")}`);
+    }
+  }
 
   console.log("");
   if (t.problems === 0 && t.warnings === 0) {

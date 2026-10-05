@@ -3,9 +3,41 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
-## Unreleased
+## 0.1.32 (2026-10-04)
+
+### Fixed
+
+- **`doctor --fix` reversed `claudeMdExcludes` entries that point at your
+  default profile on purpose.** Reported by @picosam in #10. v0.1.31 pointed
+  every path in a profile's `settings.json` that led into `~/.claude` at the
+  profile's own copy, but some of those point at the default profile
+  deliberately. A work profile excluding `~/.claude/CLAUDE.md`, so Claude Code
+  does not load the default profile's instructions as a parent-folder
+  `CLAUDE.md`, had that entry turned into its own `CLAUDE.md`: each profile
+  then skipped its own instructions and loaded the default ones. It reached
+  people through the `--fix` that `upgrade` runs.
+
+  `settings.json` is now only rewritten under `hooks` and `statusLine`, the
+  keys whose paths mean "run this profile's own copy", both when seeding a new
+  profile and in `doctor`. And `doctor` finds `claudeMdExcludes` entries
+  v0.1.31 flipped, names each one, and `--fix` points it back, so the repair
+  reaches people the same way the damage did.
 
 ### Added
+
+- **Every `doctor --fix` run can be undone with `doctor --undo`.** Before it
+  changes anything, `--fix` records the files it may edit (each Code profile's
+  `settings.json` and plugin manifests, each launcher's script, plist and
+  icon, the launch helper, the update-block folders it creates) and keeps
+  only what actually changed. `--undo` puts back the most recent run's
+  changes, and again goes one run further back. A file edited since that run
+  is left alone unless you add `--force`. Rebuilt copies of Claude.app,
+  re-applied colours and a launcher's removed icon catalog are not covered:
+  they are rebuilt rather than edited, and `--fix` redoes them. Since
+  `upgrade` runs `--fix` on its own, a repair rule that turns out to be wrong
+  reaches people unasked; #10 is what that looks like, and this is the way
+  back from it.
+
 
 - **Desktop profiles can start with the MCP connectors you already had.**
   Desktop reads its connectors from `claude_desktop_config.json` inside the
