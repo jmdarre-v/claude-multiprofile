@@ -42,6 +42,8 @@ import {
   copyClaudeIcon,
   findClaudeApp,
   DEFAULT_APPLET_BUNDLE_ID,
+  DEFAULT_DESKTOP_CONFIG_FILE,
+  desktopConfigFile,
 } from "../desktop.js";
 import {
   DEFAULT_CLAUDE_CONFIG_DIR,
@@ -895,6 +897,70 @@ function checkSeededProfiles(t, reg, fix) {
   }
 }
 
+// ---- Check: Desktop MCP connectors -------------------------------------------
+//
+// Desktop reads connectors from <data dir>/claude_desktop_config.json. Copying
+// them at creation is a snapshot, and the default profile keeps moving: add a
+// connector there next month and the profiles created today will not have it.
+// Profiles created before connectors could be copied have none at all.
+//
+// This only REPORTS the difference. It never copies, with or without --fix,
+// for two reasons. A connector's config often carries its own credentials,
+// which belong to the default account. And `upgrade` runs --fix on its own, so
+// a copying --fix would push the default profile's connectors into every
+// profile on every upgrade, including one the user deliberately removed from
+// a work profile. Whether a profile should have a connector is the user's
+// call; `claude-multiprofile extensions` copies the ones they pick.
+
+function checkDesktopConnectors(t, reg) {
+  const desktop = reg.profiles.filter(
+    (p) => p.desktop && p.desktop.dataDir && fileExists(p.desktop.dataDir)
+  );
+  if (desktop.length === 0 || !fileExists(DEFAULT_DESKTOP_CONFIG_FILE)) return;
+
+  let wanted = [];
+  try {
+    const s = JSON.parse(fs.readFileSync(DEFAULT_DESKTOP_CONFIG_FILE, "utf8")).mcpServers;
+    wanted = s && typeof s === "object" && !Array.isArray(s) ? Object.keys(s) : [];
+  } catch {
+    // Default profile's own config is unreadable: not this check's business.
+    return;
+  }
+  if (wanted.length === 0) return;
+
+  step("Desktop MCP connectors");
+  for (const p of desktop) {
+    const file = desktopConfigFile(p.desktop.dataDir);
+    let have = [];
+    if (fileExists(file)) {
+      try {
+        const c = JSON.parse(fs.readFileSync(file, "utf8"));
+        have =
+          c && typeof c.mcpServers === "object" && c.mcpServers && !Array.isArray(c.mcpServers)
+            ? Object.keys(c.mcpServers)
+            : [];
+      } catch {
+        warn(`${p.name}: claude_desktop_config.json is not valid JSON, so it was left alone.`);
+        info(`  Claude may not load this profile's connectors. Fix the JSON by hand: ${tildify(file)}`);
+        t.warnings++;
+        continue;
+      }
+    }
+
+    const missing = wanted.filter((k) => !have.includes(k));
+    if (missing.length === 0) {
+      ok(`${p.name}: has every connector your default profile has (${have.length}).`);
+      continue;
+    }
+    // Informational: a profile without some of the default's connectors is
+    // often exactly what the user wants.
+    info(
+      `${p.name}: does not have ${missing.length} connector${missing.length === 1 ? "" : "s"} your default profile has (${missing.join(", ")}).`
+    );
+    info(`  If it should, copy the ones you want with ${command("claude-multiprofile extensions")}.`);
+  }
+}
+
 // ---- Check: managed updates --------------------------------------------------
 //
 // Since v0.1.29 a profile's copy of Claude does not update itself. Its
@@ -1271,6 +1337,7 @@ export async function doctor(args = []) {
   checkDesktopLaunchPath(t, reg);
   checkGhIsolation(t, reg, fix);
   checkSeededProfiles(t, reg, fix);
+  checkDesktopConnectors(t, reg);
   checkDenyRules(t, reg, fix);
 
   // ---- Summary -------------------------------------------------------------

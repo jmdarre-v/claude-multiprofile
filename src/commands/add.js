@@ -44,6 +44,7 @@ import {
   compileApp,
   launchTargetFor,
   copyClaudeIcon,
+  DEFAULT_DESKTOP_CONFIG_FILE,
 } from "../desktop.js";
 
 import {
@@ -704,7 +705,35 @@ async function askDesktopQuestions(name) {
     default: null,
   });
 
-  return { name, dataDir, appPath, claudeAppPath, applyIcon, color };
+  // MCP connectors from your default Desktop profile. Only offered when there
+  // are some. A choice, not automatic: a connector's config often carries its
+  // own credentials, and those belong to the default account.
+  let seedConnectors = false;
+  let defaultServers = [];
+  try {
+    const s = JSON.parse(fs.readFileSync(DEFAULT_DESKTOP_CONFIG_FILE, "utf8")).mcpServers;
+    if (s && typeof s === "object" && !Array.isArray(s)) defaultServers = Object.keys(s);
+  } catch {
+    // No default Desktop config, or unreadable: nothing to offer.
+  }
+  if (defaultServers.length > 0) {
+    explain(`
+      Your default Claude Desktop has ${defaultServers.length} MCP connector${defaultServers.length === 1 ? "" : "s"} set up
+      (${defaultServers.join(", ")}). We can copy them into this profile so you
+      don't set them up again.
+
+      Their settings come along as they are, including any API keys or tokens
+      in them, which belong to your default account. Say no if this profile
+      should connect with its own credentials; you can copy individual ones
+      later with \`claude-multiprofile extensions\`.
+    `);
+    seedConnectors = await confirm({
+      message: "Copy your default profile's MCP connectors into this profile?",
+      default: true,
+    });
+  }
+
+  return { name, dataDir, appPath, claudeAppPath, applyIcon, color, seedConnectors };
 }
 
 // ===========================================================================
@@ -835,7 +864,8 @@ function printPlan({ name, desktopConfig, codeConfig }) {
     console.log(`    Data folder: ${pathStr(tildify(desktopConfig.dataDir))}`);
     console.log(`    Launcher app: ${pathStr(tildify(desktopConfig.appPath))}`);
     console.log(`    Apply Claude icon: ${desktopConfig.applyIcon ? "yes" : "no"}`);
-    console.log(`    Dock colour: ${desktopConfig.color || "none"}\n`);
+    console.log(`    Dock colour: ${desktopConfig.color || "none"}`);
+    console.log(`    Copy MCP connectors: ${desktopConfig.seedConnectors ? "yes" : "no"}\n`);
   }
   if (codeConfig) {
     console.log("  Claude Code:");

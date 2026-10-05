@@ -3,6 +3,33 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## Unreleased
+
+### Added
+
+- **Desktop profiles can start with the MCP connectors you already had.**
+  Desktop reads its connectors from `claude_desktop_config.json` inside the
+  `--user-data-dir`, so a new profile opened with none of them, and there was
+  no command to carry them over. Code profiles already got theirs from
+  `seedConfigDir()`. Contributed by @roccodebellis in #12, closing #11.
+
+  When your default Desktop profile has connectors, `add` now asks whether to
+  copy them, and says that their settings come along as they are, including
+  any API keys or tokens. The copy only adds: it never replaces a connector
+  the profile already has, keeps every other key in the file, and leaves a
+  config that does not parse untouched.
+
+  Afterwards, `doctor` shows which of the default profile's connectors each
+  profile doesn't have, as information, and `claude-multiprofile extensions`
+  copies the ones you pick. It refuses while that profile's Claude is
+  running, because the app rewrites the file from its own state and a copy
+  made behind a live instance is lost at its next save.
+
+  Nothing copies connectors without asking. `doctor --fix` deliberately does
+  not, because `upgrade` runs it on its own: a copying `--fix` would push the
+  default profile's connectors, and their credentials, into every profile on
+  every upgrade, including ones deliberately removed from a work profile.
+
 ## 0.1.31 (2026-09-27)
 
 ### Fixed

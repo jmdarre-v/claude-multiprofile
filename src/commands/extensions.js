@@ -1,6 +1,6 @@
-// `claude-multiprofile extensions` - copy Claude Desktop extensions from
-// one Desktop install (the default install or any registered profile)
-// into another registered Desktop profile.
+// `claude-multiprofile extensions` - copy Claude Desktop extensions, and MCP
+// connectors, from one Desktop install (the default install or any registered
+// profile) into another registered Desktop profile.
 //
 // Background:
 //
@@ -51,6 +51,8 @@ import {
   command,
 } from "../util.js";
 import { DEFAULT_DESKTOP_DATA_DIR, detectDefaults } from "../detect.js";
+import { desktopConfigFile, seedDesktopMcpServers, dataDirInUse } from "../desktop.js";
+import { clonePathFor, cloneIsRunning } from "../appclone.js";
 
 const EXT_DIR_NAME = "Claude Extensions";
 const EXT_SETTINGS_DIR_NAME = "Claude Extensions Settings";
@@ -83,6 +85,17 @@ function listExtensions(dataDir) {
   });
 }
 
+// MCP connectors live in <data dir>/claude_desktop_config.json under
+// mcpServers. Returns their names, or [] when there is no readable config.
+function listConnectors(dataDir) {
+  try {
+    const s = JSON.parse(fs.readFileSync(desktopConfigFile(dataDir), "utf8")).mcpServers;
+    return s && typeof s === "object" && !Array.isArray(s) ? Object.keys(s) : [];
+  } catch {
+    return [];
+  }
+}
+
 // ---- Copy -----------------------------------------------------------------
 
 function copyExtension(ext, targetDataDir) {
@@ -112,7 +125,7 @@ function copyExtension(ext, targetDataDir) {
 // ---- Top-level command -----------------------------------------------------
 
 export async function extensions(args) {
-  header("Copy Claude Desktop extensions");
+  header("Copy Claude Desktop extensions and connectors");
 
   const force = args.includes("--force");
 
@@ -155,7 +168,7 @@ export async function extensions(args) {
   // ---- Pick source --------------------------------------------------------
 
   const source = await select({
-    message: "Copy extensions FROM:",
+    message: "Copy FROM:",
     choices: sourceChoices,
   });
 
@@ -174,22 +187,30 @@ export async function extensions(args) {
   }
 
   const target = await select({
-    message: "Copy extensions TO:",
+    message: "Copy TO:",
     choices: targetChoices,
   });
 
-  step(`Copying extensions: ${source.label} → ${target.label}`);
+  step(`Copying: ${source.label} → ${target.label}`);
   info(`Source: ${pathStr(tildify(source.dataDir))}`);
   info(`Target: ${pathStr(tildify(target.dataDir))}`);
 
   // ---- Inventory ----------------------------------------------------------
 
   const sourceExts = listExtensions(source.dataDir);
-  if (sourceExts.length === 0) {
-    warn(`No extensions found in ${source.label}.`);
-    info("Install extensions there first, then re-run this command.");
+  const sourceConnectors = listConnectors(source.dataDir);
+  if (sourceExts.length === 0 && sourceConnectors.length === 0) {
+    warn(`No extensions or MCP connectors found in ${source.label}.`);
+    info("Set them up there first, then re-run this command.");
     return;
   }
+
+  if (sourceExts.length > 0) await copyExtensionsStep(sourceExts, target, force);
+  if (sourceConnectors.length > 0) await copyConnectorsStep(sourceConnectors, source, target);
+  info("Restart that profile's Claude Desktop to pick up what was copied.");
+}
+
+async function copyExtensionsStep(sourceExts, target, force) {
 
   const targetExts = listExtensions(target.dataDir);
   const targetIds = new Set(targetExts.map((e) => e.id));
@@ -263,6 +284,46 @@ export async function extensions(args) {
   }
 
   console.log("");
-  ok(`Done. Copied ${copied} extension${copied === 1 ? "" : "s"}${skipped > 0 ? `, skipped ${skipped}` : ""}.`);
-  info("Restart Claude Desktop for the new profile to pick up the extensions.");
+  ok(`Extensions: copied ${copied}${skipped > 0 ? `, skipped ${skipped}` : ""}.`);
+}
+
+// Connectors are picked one by one, none pre-selected: a connector's settings
+// often carry its own credentials (tokens in `env`), and those belong to the
+// source account. One the target already has is shown but never replaced.
+async function copyConnectorsStep(names, source, target) {
+  step("MCP connectors");
+  const already = new Set(listConnectors(target.dataDir));
+  const choices = names.map((n) => ({
+    name: n,
+    value: n,
+    disabled: already.has(n) ? "already in target, left as is" : false,
+  }));
+  if (choices.every((c) => c.disabled)) {
+    ok(`${target.label} already has every connector ${source.label} has.`);
+    return;
+  }
+
+  // Claude rewrites this file from its own state while it runs, so a copy
+  // into a running profile would be lost at its next save.
+  if (cloneIsRunning(clonePathFor(target.profile.name)) || dataDirInUse(target.dataDir)) {
+    warn(`${target.label} is open in Claude Desktop, so connectors were not copied.`);
+    info("Claude would overwrite them. Quit it, then run this command again.");
+    return;
+  }
+
+  info("Each connector's settings are copied as they are, including any API keys or tokens in them.");
+  const selected = await checkbox({
+    message: "Which connectors to copy? (space to toggle, enter to confirm)",
+    choices,
+    pageSize: Math.min(choices.length + 2, 15),
+  });
+  if (selected.length === 0) {
+    info("No connectors selected.");
+    return;
+  }
+  const r = seedDesktopMcpServers(target.dataDir, { sourceFile: desktopConfigFile(source.dataDir), only: selected });
+  if (r.status === "seeded") ok(`Connectors: copied ${r.added.join(", ")}.`);
+  else if (r.status === "foreign") {
+    warn(`${target.label}'s claude_desktop_config.json is not valid JSON, so it was left alone.`);
+  } else info("Nothing new to copy.");
 }

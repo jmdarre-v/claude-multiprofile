@@ -43,7 +43,8 @@ COMMANDS
   doctor [--fix]         Diagnose the whole setup: which claude wins on PATH,
                          broken npm installs, directory collisions, and
                          cross-profile read protection (--fix repairs drift)
-  extensions             Copy Claude Desktop extensions between profiles
+  extensions             Copy Claude Desktop extensions and MCP connectors
+                         between profiles
                          (interactive: pick source, then target)
   rename [old] [new]     Rename a profile and move its folders, alias, and
                          launcher to match (interactive if no names given)
@@ -87,7 +88,7 @@ async function pickCommand() {
       { name: "list         List configured profiles", value: "list" },
       { name: "status       Health-check all profiles", value: "status" },
       { name: "doctor       Diagnose PATH, installs, collisions, isolation", value: "doctor" },
-      { name: "extensions   Copy Claude Desktop extensions between profiles", value: "extensions" },
+      { name: "extensions   Copy Desktop extensions and connectors between profiles", value: "extensions" },
       { name: "rename       Rename a profile and move its folders/alias", value: "rename" },
       { name: "repair       Re-register a profile launcher with macOS", value: "repair" },
       { name: "remove       Remove a profile", value: "remove" },
