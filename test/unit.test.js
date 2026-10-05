@@ -1717,3 +1717,42 @@ test("seedDesktopMcpServers: a config we cannot parse is reported, never rewritt
   assert.equal(fs.readFileSync(target, "utf8"), "{ not json");
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+test("seedDesktopMcpServers: never replaces a connector the profile already has", async () => {
+  const { seedDesktopMcpServers, desktopConfigFile } = await import("../src/desktop.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-dmcp-"));
+  // Same name in both: the default profile's carries the personal token.
+  const sourceFile = fakeDesktopSource(root, {
+    github: { command: "gh-mcp", env: { GITHUB_TOKEN: "personal" } },
+    zeplin: { command: "npx" },
+  });
+  const dataDir = path.join(root, "Claude-WORK");
+  fs.mkdirSync(dataDir);
+  fs.writeFileSync(
+    desktopConfigFile(dataDir),
+    JSON.stringify({ mcpServers: { github: { command: "gh-mcp", env: { GITHUB_TOKEN: "work" } } } })
+  );
+
+  const r = seedDesktopMcpServers(dataDir, { sourceFile });
+  assert.deepEqual(r.added, ["zeplin"], "only what was missing is added");
+  const written = JSON.parse(fs.readFileSync(desktopConfigFile(dataDir), "utf8"));
+  assert.equal(written.mcpServers.github.env.GITHUB_TOKEN, "work", "the work token survives");
+
+  // Nothing missing any more: a second run changes nothing.
+  assert.equal(seedDesktopMcpServers(dataDir, { sourceFile }).status, "current");
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("seedDesktopMcpServers: `only` copies just the connectors picked", async () => {
+  const { seedDesktopMcpServers, desktopConfigFile } = await import("../src/desktop.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-dmcp-"));
+  const sourceFile = fakeDesktopSource(root, { a: { command: "a" }, b: { command: "b" }, c: { command: "c" } });
+  const dataDir = path.join(root, "Claude-WORK");
+  fs.mkdirSync(dataDir);
+
+  const r = seedDesktopMcpServers(dataDir, { sourceFile, only: ["b"] });
+  assert.deepEqual(r.added, ["b"]);
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(desktopConfigFile(dataDir), "utf8")).mcpServers), ["b"]);
+  assert.equal(seedDesktopMcpServers(dataDir, { sourceFile, only: [] }).status, "none");
+  fs.rmSync(root, { recursive: true, force: true });
+});

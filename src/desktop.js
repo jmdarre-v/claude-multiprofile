@@ -141,9 +141,15 @@ export function desktopConfigFile(dataDir) {
 //   "current" - the profile already had every server
 //   "none"    - nothing to copy: no readable source servers
 //   "foreign" - the profile has a config we could not parse; left alone
+//
+// `only` limits the copy to the named servers (the explicit, pick-what-you-
+// want copy in `extensions`). A server the profile already has is never
+// replaced, even when the source has one by the same name: a work profile's
+// `github` server, with its work token, must not be overwritten by the
+// default profile's personal one. Copying only ever adds.
 export function seedDesktopMcpServers(
   dataDir,
-  { sourceFile = DEFAULT_DESKTOP_CONFIG_FILE } = {}
+  { sourceFile = DEFAULT_DESKTOP_CONFIG_FILE, only = null } = {}
 ) {
   const nothing = { status: "none", added: [], total: 0 };
   let servers;
@@ -153,6 +159,9 @@ export function seedDesktopMcpServers(
     return nothing;
   }
   if (!servers || typeof servers !== "object" || Array.isArray(servers)) return nothing;
+  if (only) {
+    servers = Object.fromEntries(Object.entries(servers).filter(([k]) => only.includes(k)));
+  }
   if (Object.keys(servers).length === 0) return nothing;
 
   const file = desktopConfigFile(dataDir);
@@ -172,12 +181,13 @@ export function seedDesktopMcpServers(
     config.mcpServers && typeof config.mcpServers === "object" && !Array.isArray(config.mcpServers)
       ? config.mcpServers
       : {};
-  const merged = { ...existing, ...servers };
+  // The profile's own entries are spread last, so they win.
+  const added = Object.keys(servers).filter((k) => !(k in existing));
+  const merged = { ...servers, ...existing };
   const total = Object.keys(merged).length;
-  if (JSON.stringify(existing) === JSON.stringify(merged)) {
+  if (added.length === 0) {
     return { status: "current", added: [], total };
   }
-  const added = Object.keys(servers).filter((k) => !(k in existing));
   config.mcpServers = merged;
   fs.writeFileSync(file, JSON.stringify(config, null, 2) + "\n", "utf8");
   return { status: "seeded", added, total };
@@ -694,6 +704,7 @@ export function setupDesktop({
   codeConfigDir,
   ghConfigDir,
   color,
+  seedConnectors = false,
 }) {
   // Wraps the whole setup. Returns a summary the wizard can save to the
   // registry and print to the user.
@@ -707,17 +718,21 @@ export function setupDesktop({
   ensureDataDir(dataDir);
   ok("Data folder ready.");
 
-  // Carry the default profile's MCP connectors over. Without this the profile
-  // opens with no connectors at all, which reads as a bug to anyone who had
-  // them configured.
-  const mcp = seedDesktopMcpServers(dataDir);
-  if (mcp.status === "seeded") {
-    ok(`MCP connectors copied from your default profile: ${mcp.added.length} added, ${mcp.total} in total.`);
-  } else if (mcp.status === "current") {
-    ok(`MCP connectors already in place (${mcp.total}).`);
-  } else if (mcp.status === "foreign") {
-    warn("This data folder's claude_desktop_config.json could not be parsed; left it alone.");
-    info(`  Its connectors stay as they are. ${command("claude-multiprofile doctor")} re-checks this.`);
+  // Carry the default profile's MCP connectors over, when the user chose to
+  // in the wizard. It is a choice rather than automatic because a connector's
+  // config often carries its own credentials (tokens in `env`), and those are
+  // the default account's: copying them into a work profile is the kind of
+  // cross-account bleed a profile exists to prevent unless it was asked for.
+  if (seedConnectors) {
+    const mcp = seedDesktopMcpServers(dataDir);
+    if (mcp.status === "seeded") {
+      ok(`MCP connectors copied from your default profile: ${mcp.added.length} added, ${mcp.total} in total.`);
+    } else if (mcp.status === "current") {
+      ok(`MCP connectors already in place (${mcp.total}).`);
+    } else if (mcp.status === "foreign") {
+      warn("This data folder's claude_desktop_config.json could not be parsed; left it alone.");
+      info(`  Its connectors stay as they are. ${command("claude-multiprofile doctor")} re-checks this.`);
+    }
   }
 
   // A colour means the launcher opens a per-profile CLONE of Claude.app that
