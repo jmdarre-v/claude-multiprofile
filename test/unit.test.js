@@ -1882,3 +1882,48 @@ test("doctor --undo puts back what doctor --fix changed, and never clobbers late
 
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+test("doctor: a copy that is behind is information when its launcher updates it, a warning when nothing will", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("compiles real launchers with osacompile");
+    return;
+  }
+  const { execFileSync } = await import("node:child_process");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-behind-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const home = path.join(root, "home");
+  const cfg = path.join(root, "config");
+  const appSupport = path.join(home, "Library", "Application Support");
+  const plist = (version) =>
+    `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.anthropic.claudefordesktop</string><key>CFBundleShortVersionString</key><string>${version}</string></dict></plist>`;
+  const fakeApp = (dir, version) => {
+    fs.mkdirSync(path.join(dir, "Contents"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "Contents", "Info.plist"), plist(version));
+  };
+  const source = path.join(root, "Source.app");
+  fakeApp(source, "2.0.0");
+  const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: cfg, NO_COLOR: "1" };
+  const profiles = [];
+  for (const [name, managed] of [["managed", true], ["direct", false]]) {
+    const clone = path.join(appSupport, "claude-multiprofile", "apps", `Claude ${name}.app`);
+    fakeApp(clone, "1.0.0"); // behind the source
+    const dataDir = path.join(appSupport, `Claude-${name.toUpperCase()}`);
+    fs.mkdirSync(dataDir, { recursive: true });
+    const appPath = path.join(home, "Applications", `Claude ${name.toUpperCase()}.app`);
+    // Build the launcher in a child, so the helper lands in the sandboxed HOME.
+    execFileSync(process.execPath, ["--input-type=module", "-e", `
+      import { compileApp } from ${JSON.stringify(path.resolve("src/desktop.js"))};
+      compileApp(${JSON.stringify({ name, dataDir, appPath, claudeAppPath: clone, dedicatedBundle: true, ...(managed ? { sourceAppPath: source } : {}) })});
+    `], { env });
+    profiles.push({ name, type: "desktop", code: null, desktop: { dataDir, appPath, claudeAppPath: source, color: null } });
+  }
+  fs.mkdirSync(path.join(cfg, "claude-multiprofile"), { recursive: true });
+  fs.writeFileSync(path.join(cfg, "claude-multiprofile", "profiles.json"), JSON.stringify({ version: 1, profiles }));
+
+  const out = execFileSync(process.execPath, [path.resolve("bin/claude-multiprofile.js"), "doctor"], { encoding: "utf8", env, timeout: 60_000 });
+  const section = out.slice(out.indexOf("Per-profile Claude copies"), out.indexOf("Profile updates"));
+  assert.match(section, /ℹ managed: will update from Claude 1\.0\.0 to 2\.0\.0 the next time you open it/);
+  assert.doesNotMatch(section, /⚠ managed:/, "the managed profile is not a warning");
+  assert.match(section, /⚠ direct: copy is Claude 1\.0\.0, but 2\.0\.0 is installed/);
+  assert.match(section, /Nothing updates it on its own/);
+});

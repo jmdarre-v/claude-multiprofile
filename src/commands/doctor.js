@@ -769,12 +769,18 @@ function checkAppClones(t, reg, fix) {
 
     // Behind its source: rebuilding is an upgrade, and re-tints on the way.
     if (state === "behind") {
-      warn(`${p.name}: copy is Claude ${v.clone}, but ${v.source} is installed.`);
-      info("  Its launcher updates it the next time you open it.");
-      if (fix && cloneIsRunning(clone)) {
-        info("  It is open right now, so it was left alone; rebuilding an open app can crash it.");
-        t.warnings++;
-      } else if (fix) {
+      // With a launcher that goes through the launch helper, being behind is
+      // the normal state between a Claude update and the next time the
+      // profile is opened: the helper rebuilds the copy on that click. That
+      // is information, not a warning. A warning that is routinely nothing
+      // teaches people to skim past the ones that matter, and it made every
+      // upgrade after a Claude update end in "1 warning" with nothing wrong.
+      // Only a launcher that opens the copy directly leaves it stuck.
+      const managed = launcherUsesHelper(p.desktop.appPath) === true && helperState() !== "missing";
+      const open = cloneIsRunning(clone);
+
+      if (fix && !open) {
+        info(`${p.name}: copy is Claude ${v.clone}, but ${v.source} is installed.`);
         try {
           ensureColoredClone({
             name: p.name,
@@ -787,10 +793,23 @@ function checkAppClones(t, reg, fix) {
           err(`  Could not rebuild the copy: ${e.message}`);
           t.problems++;
         }
+        continue;
+      }
+
+      if (managed) {
+        info(`${p.name}: will update from Claude ${v.clone} to ${v.source} the next time you open it.`);
+        if (open) info("  It is open now, so that happens after you quit it and open it again.");
+        continue;
+      }
+
+      warn(`${p.name}: copy is Claude ${v.clone}, but ${v.source} is installed.`);
+      info("  Nothing updates it on its own: its launcher opens the copy directly.");
+      if (fix) {
+        info("  It is open right now, so it was left alone; rebuilding an open app can crash it.");
       } else {
         info(`  Repair with ${command("claude-multiprofile doctor --fix")}`);
-        t.warnings++;
       }
+      t.warnings++;
       continue;
     }
 

@@ -3,6 +3,21 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## 0.1.33 (2026-10-05)
+
+### Changed
+
+- **A profile's copy being behind your main Claude is no longer a warning
+  when its launcher will update it.** With launcher-managed updates (v0.1.29),
+  a copy is behind as a matter of course between a Claude update and the next
+  time you open that profile, and the launcher rebuilds it on that click. It
+  still counted as a warning, so `upgrade` after any Claude update ended with
+  "1 warning" while nothing was wrong, and a warning that is routinely
+  nothing teaches people to skim past the ones that matter. `doctor` now says
+  the profile will update the next time you open it, and leaves it out of the
+  count. It stays a warning when the launcher opens the copy directly, since
+  then nothing updates it on its own.
+
 ## 0.1.32 (2026-10-04)
 
 ### Fixed
