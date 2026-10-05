@@ -1756,3 +1756,78 @@ test("seedDesktopMcpServers: `only` copies just the connectors picked", async ()
   assert.equal(seedDesktopMcpServers(dataDir, { sourceFile, only: [] }).status, "none");
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+// ---------------------------------------------------------------------------
+// #10 - settings paths that point at the default profile on purpose
+// ---------------------------------------------------------------------------
+
+function twoProfiles(root) {
+  const def = path.join(root, ".claude");
+  const prof = path.join(root, ".claude-work");
+  for (const d of [def, prof]) {
+    fs.mkdirSync(path.join(d, "hooks"), { recursive: true });
+    fs.writeFileSync(path.join(d, "CLAUDE.md"), "x");
+    fs.writeFileSync(path.join(d, "hooks", "h.sh"), "x");
+  }
+  return { def, prof };
+}
+
+test("rebaseJsonFile with SETTINGS_REBASE_KEYS: hooks follow the profile, claudeMdExcludes does not", async () => {
+  const { rebaseJsonFile, SETTINGS_REBASE_KEYS } = await import("../src/code.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-i10-"));
+  const { def, prof } = twoProfiles(root);
+  const file = path.join(prof, "settings.json");
+  // The reported setup: a work profile excluding the default CLAUDE.md, so it
+  // is not loaded as a parent-folder file. v0.1.31 turned this into the
+  // profile's own CLAUDE.md, reversing it.
+  fs.writeFileSync(file, JSON.stringify({
+    claudeMdExcludes: [`${def}/CLAUDE.md`],
+    permissions: { allow: [`Read(${def}/CLAUDE.md)`] },
+    hooks: { Stop: [{ command: `${def}/hooks/h.sh` }] },
+    statusLine: { command: `${def}/hooks/h.sh` },
+  }));
+  rebaseJsonFile(file, def, prof, { keys: SETTINGS_REBASE_KEYS });
+  const out = JSON.parse(fs.readFileSync(file, "utf8"));
+  assert.deepEqual(out.claudeMdExcludes, [`${def}/CLAUDE.md`], "left pointing at the default on purpose");
+  assert.deepEqual(out.permissions.allow, [`Read(${def}/CLAUDE.md)`]);
+  assert.equal(out.hooks.Stop[0].command, `${prof}/hooks/h.sh`);
+  assert.equal(out.statusLine.command, `${prof}/hooks/h.sh`);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("flippedClaudeMdExcludes: restores what v0.1.31 reversed, and nothing else", async () => {
+  const { flippedClaudeMdExcludes } = await import("../src/code.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-i10-"));
+  const { def, prof } = twoProfiles(root);
+  const file = path.join(prof, "settings.json");
+  const elsewhere = path.join(root, "other", "CLAUDE.md");
+  fs.writeFileSync(file, JSON.stringify({
+    claudeMdExcludes: [`${prof}/CLAUDE.md`, elsewhere, `${prof}/not-in-default.md`],
+    model: "opus",
+  }));
+
+  const preview = flippedClaudeMdExcludes(file, prof, def);
+  assert.deepEqual(preview, [{ from: `${prof}/CLAUDE.md`, to: `${def}/CLAUDE.md` }]);
+  assert.match(fs.readFileSync(file, "utf8"), /claude-work\/CLAUDE\.md/, "a preview changes nothing");
+
+  flippedClaudeMdExcludes(file, prof, def, { apply: true });
+  const out = JSON.parse(fs.readFileSync(file, "utf8"));
+  // Only an entry whose default-profile counterpart exists goes back.
+  assert.deepEqual(out.claudeMdExcludes, [`${def}/CLAUDE.md`, elsewhere, `${prof}/not-in-default.md`]);
+  assert.equal(out.model, "opus", "the rest of the file is untouched");
+  assert.deepEqual(flippedClaudeMdExcludes(file, prof, def), [], "nothing left to restore");
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("seedConfigDir: a new profile keeps claudeMdExcludes pointing where it pointed", async () => {
+  const { seedConfigDir } = await import("../src/code.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-i10-"));
+  const src = path.join(root, ".claude");
+  fs.mkdirSync(src, { recursive: true });
+  fs.writeFileSync(path.join(src, "CLAUDE.md"), "x");
+  fs.writeFileSync(path.join(src, "settings.json"), JSON.stringify({ claudeMdExcludes: [`${src}/CLAUDE.md`] }));
+  const dst = path.join(root, ".claude-work");
+  seedConfigDir(src, dst, { userConfigFile: path.join(root, "none.json") });
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dst, "settings.json"), "utf8")).claudeMdExcludes, [`${src}/CLAUDE.md`]);
+  fs.rmSync(root, { recursive: true, force: true });
+});

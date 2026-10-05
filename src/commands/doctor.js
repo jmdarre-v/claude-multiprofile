@@ -51,6 +51,8 @@ import {
   copiedTranscripts,
   pathsIntoOtherProfile,
   rebaseJsonFile,
+  flippedClaudeMdExcludes,
+  SETTINGS_REBASE_KEYS,
 } from "../code.js";
 import {
   clonePathFor,
@@ -864,24 +866,48 @@ function checkSeededProfiles(t, reg, fix) {
       info(`  to drop them, delete the matching transcripts under ${tildify(path.join(dir, "projects"))}.`);
     }
 
+    // Plugin manifests are entirely install paths, so all of them count.
+    // settings.json only under SETTINGS_REBASE_KEYS: its other keys can point
+    // at the default profile on purpose (#10).
+    const settingsFile = path.join(dir, "settings.json");
     const files = [
-      path.join(dir, "plugins", "installed_plugins.json"),
-      path.join(dir, "plugins", "known_marketplaces.json"),
-      path.join(dir, "settings.json"),
-    ].filter(fileExists);
+      { file: path.join(dir, "plugins", "installed_plugins.json"), keys: null },
+      { file: path.join(dir, "plugins", "known_marketplaces.json"), keys: null },
+      { file: settingsFile, keys: SETTINGS_REBASE_KEYS },
+    ].filter((x) => fileExists(x.file));
     let rebasable = 0;
     let stuck = 0;
-    for (const f of files) {
-      const r = pathsIntoOtherProfile(f, DEFAULT_CLAUDE_CONFIG_DIR, dir);
+    for (const { file, keys } of files) {
+      const r = pathsIntoOtherProfile(file, DEFAULT_CLAUDE_CONFIG_DIR, dir, { keys });
       rebasable += r.rebasable;
       stuck += r.stuck;
     }
+
+    // Undo what v0.1.31 got wrong: claudeMdExcludes entries it turned from
+    // the default profile's CLAUDE.md into this profile's own.
+    const flipped = fileExists(settingsFile)
+      ? flippedClaudeMdExcludes(settingsFile, dir, DEFAULT_CLAUDE_CONFIG_DIR)
+      : [];
+    if (flipped.length > 0) {
+      clean = false;
+      warn(`${p.name}: claudeMdExcludes excludes this profile's own instructions instead of your default profile's.`);
+      info("  v0.1.31's --fix rewrote these entries, which reversed what they were for:");
+      for (const c of flipped) info(`    ${tildify(c.from)}  should be  ${tildify(c.to)}`);
+      if (fix) {
+        flippedClaudeMdExcludes(settingsFile, dir, DEFAULT_CLAUDE_CONFIG_DIR, { apply: true });
+        ok("  Repaired: pointed back at your default profile. Takes effect in new sessions.");
+      } else {
+        info(`  Repair with ${command("claude-multiprofile doctor --fix")}`);
+        t.warnings++;
+      }
+    }
+
     if (rebasable > 0) {
       clean = false;
       warn(`${p.name}: ${rebasable} plugin or hook path${rebasable === 1 ? " leads" : "s lead"} into your default profile's folder.`);
       info("  So it loads those from the default profile, and changes there reach it too.");
       if (fix) {
-        for (const f of files) rebaseJsonFile(f, DEFAULT_CLAUDE_CONFIG_DIR, dir);
+        for (const { file, keys } of files) rebaseJsonFile(file, DEFAULT_CLAUDE_CONFIG_DIR, dir, { keys });
         ok("  Repaired: pointed at this profile's own copies. Takes effect in new sessions.");
       } else {
         info(`  Repair with ${command("claude-multiprofile doctor --fix")}`);

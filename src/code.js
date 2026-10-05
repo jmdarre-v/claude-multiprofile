@@ -197,9 +197,32 @@ function mapStrings(value, fn) {
   return value;
 }
 
-// Rewrite a JSON file's string values with rebasePaths. A file that does not
+// Which keys of settings.json hold paths that mean "this profile's own copy".
+//
+// Only these are ever rewritten. v0.1.31 rewrote every string in the file,
+// and settings also hold paths that point at the DEFAULT profile on purpose.
+// `claudeMdExcludes` is the case that bit (#10): a work profile excluding
+// ~/.claude/CLAUDE.md, so Code does not load the default profile's
+// instructions as a parent-folder CLAUDE.md, had that entry turned into its
+// own CLAUDE.md, reversing the intent. Hooks and the status line are commands
+// to run, and running the profile's own copy is what seeding them is for.
+export const SETTINGS_REBASE_KEYS = ["hooks", "statusLine"];
+
+function rebaseValue(value, fromDir, toDir, exists, keys) {
+  if (!keys) return mapStrings(value, (s) => rebasePaths(s, fromDir, toDir, { exists }));
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([k, v]) => [
+      k,
+      keys.includes(k) ? mapStrings(v, (s) => rebasePaths(s, fromDir, toDir, { exists })) : v,
+    ])
+  );
+}
+
+// Rewrite a JSON file's string values with rebasePaths. With `keys`, only the
+// values under those top-level keys are considered. A file that does not
 // parse is left exactly as it is. Returns true if anything changed.
-export function rebaseJsonFile(file, fromDir, toDir) {
+export function rebaseJsonFile(file, fromDir, toDir, { keys = null } = {}) {
   let before;
   try {
     before = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -207,7 +230,7 @@ export function rebaseJsonFile(file, fromDir, toDir) {
     return false;
   }
   const exists = (rel) => fs.existsSync(path.join(toDir, rel));
-  const after = mapStrings(before, (s) => rebasePaths(s, fromDir, toDir, { exists }));
+  const after = rebaseValue(before, fromDir, toDir, exists, keys);
   if (JSON.stringify(after) === JSON.stringify(before)) return false;
   fs.writeFileSync(file, JSON.stringify(after, null, 2) + "\n", "utf8");
   return true;
@@ -215,17 +238,20 @@ export function rebaseJsonFile(file, fromDir, toDir) {
 
 // For doctor: how many paths in a JSON file still lead into `fromDir`, split
 // into those the profile has its own copy of (safe to rebase) and those it
-// does not (still load from the other profile, and must stay that way).
-export function pathsIntoOtherProfile(file, fromDir, toDir) {
+// does not (still load from the other profile, and must stay that way). With
+// `keys`, only the values under those top-level keys count.
+export function pathsIntoOtherProfile(file, fromDir, toDir, { keys = null } = {}) {
   const result = { rebasable: 0, stuck: 0 };
-  let text;
+  let parsed;
   try {
-    text = fs.readFileSync(file, "utf8");
-    JSON.parse(text);
+    parsed = JSON.parse(fs.readFileSync(file, "utf8"));
   } catch {
     return result;
   }
-  rebasePaths(text, fromDir, toDir, {
+  const scope = keys
+    ? Object.fromEntries(Object.entries(parsed || {}).filter(([k]) => keys.includes(k)))
+    : parsed;
+  rebasePaths(JSON.stringify(scope), fromDir, toDir, {
     exists: (rel) => {
       if (fs.existsSync(path.join(toDir, rel))) result.rebasable++;
       else result.stuck++;
@@ -233,6 +259,35 @@ export function pathsIntoOtherProfile(file, fromDir, toDir) {
     },
   });
   return result;
+}
+
+// #10: entries v0.1.31 turned from the default profile's file into the
+// profile's own. An exclusion of a profile's OWN CLAUDE.md is what that
+// rewrite produced, and the original target still exists in the default
+// profile, so pointing it back is safe. Returns [{ from, to }] for each entry
+// that would change; with `apply`, writes the file.
+export function flippedClaudeMdExcludes(settingsFile, profileDir, defaultDir, { apply = false } = {}) {
+  let settings;
+  try {
+    settings = JSON.parse(fs.readFileSync(settingsFile, "utf8"));
+  } catch {
+    return [];
+  }
+  const list = settings && Array.isArray(settings.claudeMdExcludes) ? settings.claudeMdExcludes : null;
+  if (!list) return [];
+  const exists = (rel) => fs.existsSync(path.join(defaultDir, rel));
+  const changes = [];
+  const restored = list.map((entry) => {
+    if (typeof entry !== "string") return entry;
+    const back = rebasePaths(entry, profileDir, defaultDir, { exists });
+    if (back !== entry) changes.push({ from: entry, to: back });
+    return back;
+  });
+  if (apply && changes.length > 0) {
+    settings.claudeMdExcludes = restored;
+    fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + "\n", "utf8");
+  }
+  return changes;
 }
 
 // Conversations a pre-v0.1.31 seed copied in: transcripts present in both
@@ -289,7 +344,7 @@ export function seedConfigDir(fromDir, toDir, { userConfigFile = DEFAULT_USER_CO
   }
 
   const settings = path.join(toDir, "settings.json");
-  if (fs.existsSync(settings)) rebaseJsonFile(settings, fromDir, toDir);
+  if (fs.existsSync(settings)) rebaseJsonFile(settings, fromDir, toDir, { keys: SETTINGS_REBASE_KEYS });
 
   // MCP servers: the one entry of ~/.claude.json that is setup.
   try {
