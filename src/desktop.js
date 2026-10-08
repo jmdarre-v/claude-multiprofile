@@ -602,7 +602,9 @@ export function compileApp({
   fs.mkdirSync(path.dirname(appPath), { recursive: true });
 
   // Compile into the temp directory first, never straight over the target.
-  const staged = path.join(tmpDir, "staged.app");
+  // Use the launcher's own filename: osacompile names the bundle after it,
+  // and that CFBundleName is what Raycast, Alfred and the app switcher show.
+  const staged = path.join(tmpDir, path.basename(appPath));
   execFileSync("/usr/bin/osacompile", ["-o", staged, scriptPath], {
     stdio: "pipe",
   });
