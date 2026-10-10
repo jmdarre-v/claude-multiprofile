@@ -202,16 +202,19 @@ export function writeAliases(shell, aliasLines) {
 }
 
 export function buildAliasLine(shell, aliasName, configDir, ghConfigDir) {
-  // We use single quotes so $HOME stays literal and gets expanded by the
-  // shell at alias-call time, not at definition time. That keeps the alias
-  // portable across machines if the user syncs their dotfiles.
+  // Paths are data, never shell code. Escape double-quoted values for the
+  // shell that will run them, then escape the outer Bash/Zsh alias literal.
   //
   // GH_CONFIG_DIR is optional. When set, the GitHub CLI reads its hosts.yml
   // (and therefore which account it is logged in as) from the profile's own
   // directory. Claude Code passes its environment to the shell commands it
   // runs, so every `gh` call made inside this profile uses that account.
-  const env = [`CLAUDE_CONFIG_DIR="${configDir}"`];
-  if (ghConfigDir) env.push(`GH_CONFIG_DIR="${ghConfigDir}"`);
+  const quotePath = (value) => {
+    const special = shell === "fish" ? /[\\"$]/g : /[\\"$`]/g;
+    return `"${String(value).replace(special, (c) => "\\" + c)}"`;
+  };
+  const env = [`CLAUDE_CONFIG_DIR=${quotePath(configDir)}`];
+  if (ghConfigDir) env.push(`GH_CONFIG_DIR=${quotePath(ghConfigDir)}`);
   const prefix = env.join(" ");
 
   if (shell === "fish") {
@@ -220,7 +223,8 @@ export function buildAliasLine(shell, aliasName, configDir, ghConfigDir) {
     // and Zsh do.
     return `function ${aliasName}; ${prefix} claude $argv; end`;
   }
-  return `alias ${aliasName}='${prefix} claude'`;
+  const body = `${prefix} claude`.replace(/'/g, "'\\''");
+  return `alias ${aliasName}='${body}'`;
 }
 
 // ---- Is this terminal running the aliases that are on disk? ---------------
