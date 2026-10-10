@@ -32,7 +32,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { HOME, pathStr, tildify, ok, info, warn, step } from "./util.js";
+import { HOME, pathStr, tildify, ok, info, warn, step, fileStaysWithinDir } from "./util.js";
 import { resolveBinaries } from "./claudebin.js";
 import {
   detectShell,
@@ -146,8 +146,16 @@ export const SEED_PLUGIN_ITEMS = [
 // taken from it.
 export const DEFAULT_USER_CONFIG_FILE = path.join(HOME, ".claude.json");
 
-function copyEntry(from, to) {
+function copyEntry(from, to, { independent = false } = {}) {
   fs.mkdirSync(path.dirname(to), { recursive: true });
+  if (independent) {
+    if (!fileStaysWithinDir(to, path.dirname(to))) {
+      throw new Error(`Refusing to copy setup through an external symlink: ${to}`);
+    }
+    // Copy contents, not a source symlink: rebasing must not edit the source.
+    fs.copyFileSync(from, to);
+    return;
+  }
   // -c asks for an APFS clone, which makes even a large plugins folder cost
   // almost nothing; other filesystems fall back to a real copy.
   try {
@@ -223,6 +231,7 @@ function rebaseValue(value, fromDir, toDir, exists, keys) {
 // values under those top-level keys are considered. A file that does not
 // parse is left exactly as it is. Returns true if anything changed.
 export function rebaseJsonFile(file, fromDir, toDir, { keys = null } = {}) {
+  if (!fileStaysWithinDir(file, toDir)) return false;
   let before;
   try {
     before = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -326,7 +335,7 @@ export function seedConfigDir(fromDir, toDir, { userConfigFile = DEFAULT_USER_CO
   for (const item of SEED_ITEMS) {
     const src = path.join(fromDir, item);
     if (!fs.existsSync(src)) continue;
-    copyEntry(src, path.join(toDir, item));
+    copyEntry(src, path.join(toDir, item), { independent: item === "settings.json" });
     summary.items.push(item);
   }
 
@@ -334,7 +343,11 @@ export function seedConfigDir(fromDir, toDir, { userConfigFile = DEFAULT_USER_CO
   if (fs.existsSync(pluginsFrom)) {
     for (const item of SEED_PLUGIN_ITEMS) {
       const src = path.join(pluginsFrom, item);
-      if (fs.existsSync(src)) copyEntry(src, path.join(toDir, "plugins", item));
+      if (fs.existsSync(src)) {
+        copyEntry(src, path.join(toDir, "plugins", item), {
+          independent: ["installed_plugins.json", "known_marketplaces.json"].includes(item),
+        });
+      }
     }
     for (const manifest of ["installed_plugins.json", "known_marketplaces.json"]) {
       const f = path.join(toDir, "plugins", manifest);
