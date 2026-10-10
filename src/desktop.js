@@ -53,6 +53,7 @@ import {
   step,
   tildify,
   fileExists,
+  fileStaysWithinDir,
   titleCase,
 } from "./util.js";
 
@@ -165,6 +166,9 @@ export function seedDesktopMcpServers(
   if (Object.keys(servers).length === 0) return nothing;
 
   const file = desktopConfigFile(dataDir);
+  if (!fileStaysWithinDir(file, dataDir)) {
+    return { status: "foreign", reason: "unsafe-path", added: [], total: 0 };
+  }
   let config = {};
   if (fileExists(file)) {
     try {
@@ -730,7 +734,9 @@ export function setupDesktop({
     } else if (mcp.status === "current") {
       ok(`MCP connectors already in place (${mcp.total}).`);
     } else if (mcp.status === "foreign") {
-      warn("This data folder's claude_desktop_config.json could not be parsed; left it alone.");
+      warn(mcp.reason === "unsafe-path"
+        ? "This data folder's claude_desktop_config.json resolves outside the profile or has a broken link; left it alone."
+        : "This data folder's claude_desktop_config.json could not be parsed; left it alone.");
       info(`  Its connectors stay as they are. ${command("claude-multiprofile doctor")} re-checks this.`);
     }
   }

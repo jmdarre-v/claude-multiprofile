@@ -135,6 +135,27 @@ export function fileExists(p) {
   }
 }
 
+// Resolve both files and parent directories before writing inside a profile.
+// Broken links and links escaping the profile are never safe write targets.
+export function fileStaysWithinDir(file, dir) {
+  try {
+    const root = fs.realpathSync(dir);
+    let exists = true;
+    try {
+      fs.lstatSync(file);
+    } catch (e) {
+      if (e.code !== "ENOENT") return false;
+      exists = false;
+    }
+    const target = exists
+      ? fs.realpathSync(file)
+      : path.join(fs.realpathSync(path.dirname(file)), path.basename(file));
+    return target.startsWith(root + path.sep);
+  } catch {
+    return false;
+  }
+}
+
 // ---- Misc ------------------------------------------------------------------
 
 export function sanitizeName(name) {

@@ -324,6 +324,8 @@ async function copyConnectorsStep(names, source, target) {
   const r = seedDesktopMcpServers(target.dataDir, { sourceFile: desktopConfigFile(source.dataDir), only: selected });
   if (r.status === "seeded") ok(`Connectors: copied ${r.added.join(", ")}.`);
   else if (r.status === "foreign") {
-    warn(`${target.label}'s claude_desktop_config.json is not valid JSON, so it was left alone.`);
+    warn(r.reason === "unsafe-path"
+      ? `${target.label}'s claude_desktop_config.json resolves outside the profile or has a broken link, so it was left alone.`
+      : `${target.label}'s claude_desktop_config.json is not valid JSON, so it was left alone.`);
   } else info("Nothing new to copy.");
 }
