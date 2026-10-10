@@ -810,13 +810,17 @@ async function askCodeQuestions(name) {
       setup into the new profile so you don't redo it: settings, CLAUDE.md,
       skills, slash commands, agents, hooks, plugins, and MCP servers.
 
+      Settings and MCP servers are copied as they are, including any API
+      keys or tokens in them. The new profile can use those credentials to
+      access the same services as your default profile.
+
       Nothing from USING that account comes along: no conversations, no
-      prompt history, no sessions, no caches. Sign-in does not carry over
-      either; Claude Code keeps it in the macOS Keychain under a key tied to
+      prompt history, no sessions, no caches. Claude's Keychain sign-in does
+      not carry over; Claude Code keeps it under a key tied to
       the config folder, so you'll sign in fresh on first launch.
     `);
     seedFromDefault = await confirm({
-      message: "Copy your Claude Code setup into the new profile? (recommended)",
+      message: "Copy your Claude Code setup, including any API keys or tokens, into the new profile?",
       default: true,
     });
   }

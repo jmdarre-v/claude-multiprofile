@@ -1927,3 +1927,39 @@ test("doctor: a copy that is behind is information when its launcher updates it,
   assert.match(section, /⚠ direct: copy is Claude 1\.0\.0, but 2\.0\.0 is installed/);
   assert.match(section, /Nothing updates it on its own/);
 });
+
+
+test("ensureConfigDir: new empty profiles are private even with a permissive umask", async () => {
+  const { ensureConfigDir } = await import("../src/code.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-private-profile-"));
+  const previous = process.umask(0);
+  try {
+    const dst = path.join(root, "profile");
+    ensureConfigDir(dst);
+    assert.equal(fs.statSync(dst).mode & 0o777, 0o700);
+  } finally {
+    process.umask(previous);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("seedConfigDir: copied MCP credentials and the new profile are owner-only", async () => {
+  const { seedConfigDir } = await import("../src/code.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-private-seed-"));
+  const previous = process.umask(0);
+  try {
+    const { src, userCfg } = fakeClaudeHome(root);
+    const servers = { github: { command: "demo", env: { GITHUB_TOKEN: "dummy-personal-token" } } };
+    fs.writeFileSync(userCfg, JSON.stringify({ mcpServers: servers }));
+    const dst = path.join(root, "profile");
+    seedConfigDir(src, dst, { userConfigFile: userCfg });
+    assert.equal(fs.statSync(dst).mode & 0o777, 0o700);
+    const file = path.join(dst, ".claude.json");
+    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")).mcpServers, servers,
+      "intentional credential copying must still work");
+  } finally {
+    process.umask(previous);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
