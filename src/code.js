@@ -96,7 +96,7 @@ export function ensureConfigDir(configDir, { seedFromDefault } = {}) {
   if (seedFromDefault && fs.existsSync(DEFAULT_CLAUDE_CONFIG_DIR)) {
     return seedConfigDir(DEFAULT_CLAUDE_CONFIG_DIR, configDir);
   }
-  fs.mkdirSync(configDir, { recursive: true });
+  fs.mkdirSync(configDir, { recursive: true, mode: 0o700 });
   return true;
 }
 
@@ -320,7 +320,7 @@ export function copiedTranscripts(profileDir, sourceDir) {
 
 // Returns a summary: { items: [...copied names], plugins: bool, mcpServers: n }.
 export function seedConfigDir(fromDir, toDir, { userConfigFile = DEFAULT_USER_CONFIG_FILE } = {}) {
-  fs.mkdirSync(toDir, { recursive: true });
+  fs.mkdirSync(toDir, { recursive: true, mode: 0o700 });
   const summary = { items: [], plugins: false, mcpServers: 0 };
 
   for (const item of SEED_ITEMS) {
@@ -351,7 +351,7 @@ export function seedConfigDir(fromDir, toDir, { userConfigFile = DEFAULT_USER_CO
     const servers = JSON.parse(fs.readFileSync(userConfigFile, "utf8")).mcpServers;
     if (servers && typeof servers === "object" && Object.keys(servers).length > 0) {
       const file = path.join(toDir, ".claude.json");
-      fs.writeFileSync(file, JSON.stringify({ mcpServers: servers }, null, 2) + "\n", "utf8");
+      fs.writeFileSync(file, JSON.stringify({ mcpServers: servers }, null, 2) + "\n", { encoding: "utf8", mode: 0o600 });
       rebaseJsonFile(file, fromDir, toDir);
       summary.mcpServers = Object.keys(servers).length;
     }
@@ -402,7 +402,7 @@ export function setupCode({ name, configDir, aliasName, seedFromDefault, isolate
       if (created.mcpServers) parts.push(`${created.mcpServers} MCP server${created.mcpServers === 1 ? "" : "s"}`);
       ok(`Config folder created and seeded from ${pathStr(tildify(DEFAULT_CLAUDE_CONFIG_DIR))}.`);
       ok(parts.length ? `Carried over: ${parts.join(", ")}.` : "There was no setup to carry over.");
-      info("Not carried over: conversations, prompt history, sessions, caches, or sign-in.");
+      info("Not carried over: conversations, prompt history, sessions, caches, or Keychain sign-in.");
     } else {
       ok("Config folder created (empty).");
     }
