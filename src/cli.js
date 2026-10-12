@@ -11,6 +11,7 @@ import { select } from "@inquirer/prompts";
 import { add } from "./commands/add.js";
 import { doctor } from "./commands/doctor.js";
 import { extensions } from "./commands/extensions.js";
+import { identity } from "./commands/identity.js";
 import { list } from "./commands/list.js";
 import { remove } from "./commands/remove.js";
 import { rename } from "./commands/rename.js";
@@ -56,6 +57,10 @@ COMMANDS
   self-update [name] [on|off]
                          Whether a profile's copy of Claude updates itself
                          (off by default: its launcher keeps it current)
+  identity [name] [own|shared]
+                         Whether a profile's copy of Claude is its own app to
+                         macOS (own name, bundle ID and permissions) or shares
+                         Claude's identity (the default)
   upgrade [--no-fix]     Upgrade to the latest version on npm, then apply its
                          changes to your profiles (--no-fix: install only)
   help                   Show this help
@@ -94,11 +99,12 @@ async function pickCommand() {
       { name: "repair       Re-register a profile launcher with macOS", value: "repair" },
       { name: "remove       Remove a profile", value: "remove" },
       { name: "self-update  Show or change how each profile updates", value: "self-update" },
+      { name: "identity     Show or change whether a profile is its own app to macOS", value: "identity" },
       { name: "upgrade      Upgrade claude-multiprofile to the latest version", value: "upgrade" },
       { name: "help         Show full help text", value: "help" },
       { name: "exit", value: "exit" },
     ],
-    pageSize: 13,
+    pageSize: 14,
   });
 }
 
@@ -155,7 +161,7 @@ export async function run(argv) {
 
   if (argv[0]) remindIfFixesPending(cmd);
 
-  const handlers = { add, list, status, doctor, extensions, rename, repair, remove, upgrade, "self-update": selfUpdate };
+  const handlers = { add, list, status, doctor, extensions, rename, repair, remove, upgrade, "self-update": selfUpdate, identity };
   const handler = handlers[cmd];
   if (!handler) {
     err(`Unknown command: ${cmd}`);

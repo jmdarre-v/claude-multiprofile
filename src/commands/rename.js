@@ -48,7 +48,8 @@ import {
   defaultAppPathFor,
   dataDirInUse,
 } from "../desktop.js";
-import { clonePathFor, cloneIsRunning } from "../appclone.js";
+import { clonePathFor, cloneIsRunning, ensureColoredClone } from "../appclone.js";
+import { wantsOwnIdentity, ownIdentityFor } from "../identity.js";
 import { moveUpdateBlock } from "../updates.js";
 import { RESERVED_NAMES, withoutClaudePrefix } from "./add.js";
 import {
@@ -321,6 +322,23 @@ export async function rename(args = []) {
       } catch (e) {
         warn(`Could not move its copy of Claude: ${e.message}`);
         info(`Run ${command("claude-multiprofile doctor --fix")} to build a new one.`);
+      }
+    }
+
+    // A copy with its own identity carries the old name in its bundle ID and
+    // app name (src/identity.js); both follow the profile and launcher names.
+    if (wantsOwnIdentity(profile.desktop) && fileExists(newClone)) {
+      try {
+        ensureColoredClone({
+          name: newName,
+          claudeAppPath: profile.desktop.claudeAppPath,
+          color: profile.desktop.color || null,
+          identity: ownIdentityFor(newName, newDesktop.appPath),
+        });
+        ok("Its copy's identity now matches the new name.");
+      } catch (e) {
+        warn(`Could not update its copy's identity: ${e.message}`);
+        info(`Run ${command("claude-multiprofile doctor --fix")} to apply it.`);
       }
     }
 

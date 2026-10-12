@@ -3,6 +3,51 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## Unreleased
+
+### Added
+
+- **A Desktop profile can be its own app to macOS.** A profile's copy of
+  Claude.app is a clone, so macOS treats it and `/Applications/Claude.app`
+  as one application: same bundle ID, same signature, same name. Anything
+  addressed to the app by identity reaches both. Found on 2026-10-08:
+  granting Screen Recording to one profile ended with macOS's "Quit &
+  Reopen", which quit every running copy; both windows showed Claude's
+  "still working" prompt in the same second (the shared `main.log` has the
+  two `beforeQuit` lines), and the answer given in one interrupted the work
+  in the other. AppleScript's `tell application "Claude"` and `open -b`
+  pick one of the two at random for the same reason, and a permission
+  granted to one is granted to all.
+
+  `claude-multiprofile identity <name> own` (or saying yes in `add`) gives
+  the copy its own identity: bundle ID `com.claude-multiprofile.<name>.claude`,
+  the launcher's name in the menu bar and Dock (its helper apps are renamed
+  with it, since Electron finds them by the app name), its own permission
+  grants and its own `<name> Safe Storage` Keychain entry. The copy is
+  re-signed ad hoc for that, with the entitlements that need Apple's
+  provisioning profile dropped and the hardened runtime off, and its
+  designated requirement set to the identifier alone so a copy rebuilt after
+  a Claude update is the same app to TCC and the Keychain. The launch helper
+  (v2) applies the identity when it rebuilds a copy, and adopts a copy that
+  lacks the identity its profile wants. `doctor` checks that the registry,
+  the copy and the launcher agree, and `doctor --fix` repairs drift.
+  `identity <name> shared` rebuilds the copy from `/Applications/Claude.app`,
+  the only thing that restores Anthropic's signature.
+
+  Off by default, because it trades Anthropic's signature on the copy for
+  the separation: sign-in methods that need Claude's keychain access groups
+  (passkeys, hardware keys, Microsoft Entra) are unavailable in such a copy,
+  and a profile switched over signs in again once. The README's new "Own app
+  identity" section states all of it.
+
+- `claude-multiprofile identity [name] [own|shared]`, and an "own app
+  identity" question in `add`. `list` and `status` show it.
+
+### Changed
+
+- The JXA runner moved from `src/appclone.js` to `src/jxa.js`, shared with
+  the identity work.
+
 ## 0.1.36 (2026-10-16)
 
 ### Fixed
