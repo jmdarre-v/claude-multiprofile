@@ -294,6 +294,7 @@ export async function add() {
           appPath: desktopResult.appPath,
           claudeAppPath: desktopResult.claudeAppPath,
           color: desktopResult.color || null,
+          ...(desktopResult.identity ? { identity: desktopResult.identity } : {}),
         }
       : null,
     code: codeResult
@@ -534,6 +535,7 @@ async function linkExisting(profile, missing) {
       appPath: desktopResult.appPath,
       claudeAppPath: desktopResult.claudeAppPath,
       color: desktopResult.color || null,
+      ...(desktopResult.identity ? { identity: desktopResult.identity } : {}),
     };
   } else if (next.code && profile.desktop) {
     // Existing launcher, newly linked Code target: the launcher must be
@@ -750,7 +752,28 @@ async function askDesktopQuestions(name) {
     });
   }
 
-  return { name, dataDir, appPath, claudeAppPath, applyIcon, color, seedConnectors };
+  // Own app identity (src/identity.js). Opt-in: it trades Anthropic's
+  // signature on the copy for being a separate app to macOS.
+  explain(`
+    By default the profile's copy of Claude keeps Claude's own identity
+    (bundle ID, signature and the name "Claude"), so macOS treats it and your
+    main Claude as one app. Anything macOS addresses to "Claude" then reaches
+    both: granting a permission ends with a "Quit & Reopen" that quits every
+    copy, and AppleScript or a quit by name picks one of them at random.
+
+    Giving the profile its own identity makes its copy a separate app: its
+    own bundle ID and permissions, its own Keychain entry, and the launcher's
+    name in the menu bar and Dock. The copy is re-signed locally for that, so
+    it no longer carries Anthropic's signature, and sign-in methods that need
+    Claude's keychain access groups (passkeys, hardware keys, Microsoft Entra)
+    are unavailable in it. Email and Google sign-in are unaffected.
+  `);
+  const ownIdentity = await confirm({
+    message: "Give this profile its own app identity? (a separate app to macOS)",
+    default: false,
+  });
+
+  return { name, dataDir, appPath, claudeAppPath, applyIcon, color, seedConnectors, identity: ownIdentity ? "own" : null };
 }
 
 // ===========================================================================
@@ -886,6 +909,7 @@ function printPlan({ name, desktopConfig, codeConfig }) {
     console.log(`    Launcher app: ${pathStr(tildify(desktopConfig.appPath))}`);
     console.log(`    Apply Claude icon: ${desktopConfig.applyIcon ? "yes" : "no"}`);
     console.log(`    Dock colour: ${desktopConfig.color || "none"}`);
+    console.log(`    Own app identity: ${desktopConfig.identity === "own" ? "yes" : "no"}`);
     console.log(`    Copy MCP connectors: ${desktopConfig.seedConnectors ? "yes" : "no"}\n`);
   }
   if (codeConfig) {
@@ -928,6 +952,14 @@ function printNextSteps({ name, desktopResult, codeResult }) {
       "  " + command(`open "${desktopResult.appPath}"`)
     );
     console.log("");
+    if (desktopResult.identity === "own") {
+      explain(`
+        This profile is its own app to macOS, so it asks for its own
+        permissions (Screen Recording, Accessibility, folders) the first time
+        it needs them, separately from your main Claude.
+      `);
+      console.log("");
+    }
     explain(`
       To keep it in your Dock, drag the launcher itself from ~/Applications.
 

@@ -42,6 +42,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { ensureColoredClone, applyColor, clonePathFor, psSnapshot } from "./appclone.js";
 import { installHelper, helperSpecFor } from "./launchhelper.js";
+import { wantsOwnIdentity, ownIdentityFor } from "./identity.js";
 import { blockUpdates } from "./updates.js";
 import {
   HOME,
@@ -273,6 +274,10 @@ export function buildLaunchAppleScript(dataDir, claudeAppPath, codeConfigDir, gh
   if (ghConfigDir) openArgs.push("--env", `GH_CONFIG_DIR=${ghConfigDir}`);
   openArgs.push("--args", `--user-data-dir=${dataDir}`);
   const helperArgs = [claudeAppPath, helper.source, helper.hue || "", dataDir, helper.label, ...openArgs];
+  // A profile with its own app identity (src/identity.js) tells the helper
+  // through the environment rather than a positional argument, so launchers
+  // built before and after agree on what the arguments mean.
+  const identityEnv = helper.identity ? `CMP_LAUNCH_IDENTITY=${shellQuote(helper.identity)} ` : "";
   // The launcher WAITS for the helper (no trailing `&`), and that is
   // load-bearing (#13). On macOS 27, about a second after an app quits,
   // loginwindow force-quits every process that app is responsible for
@@ -285,7 +290,7 @@ export function buildLaunchAppleScript(dataDir, claudeAppPath, codeConfigDir, gh
   // take down.
   const cmd =
     `if [ -f ${shellQuote(helper.path)} ]; then ` +
-    `/usr/bin/osascript -l JavaScript ${shellQuote(helper.path)} ${helperArgs.map(shellQuote).join(" ")} > /dev/null 2>&1; ` +
+    `${identityEnv}/usr/bin/osascript -l JavaScript ${shellQuote(helper.path)} ${helperArgs.map(shellQuote).join(" ")} > /dev/null 2>&1; ` +
     `else ${openLine} fi`;
   return `do shell script ${appleScriptString(cmd)}`;
 }
@@ -403,6 +408,16 @@ export function launcherCodeConfigDir(appPath) {
 
 export function launcherGhConfigDir(appPath) {
   return launcherEnvVar(appPath, "GH_CONFIG_DIR");
+}
+
+// The app identity a launcher hands its helper (CMP_LAUNCH_IDENTITY=...): the
+// bundle ID, null if the launcher passes none, undefined if the script can't
+// be read. Bundle IDs are [a-z0-9.-], so no un-escaping is needed.
+export function launcherIdentity(appPath) {
+  const src = readLauncherScript(appPath);
+  if (src === null) return undefined;
+  const m = src.match(/CMP_LAUNCH_IDENTITY='([^']*)' \/usr\/bin\/osascript/);
+  return m ? m[1] : null;
 }
 
 export function uniqueBundleId(name) {
@@ -612,6 +627,7 @@ export function launchTargetFor(name, desktop) {
       dedicatedBundle: true,
       sourceAppPath: desktop.claudeAppPath,
       color: desktop.color || null,
+      identity: wantsOwnIdentity(desktop) ? ownIdentityFor(name, desktop.appPath) : null,
     };
   }
   return { claudeAppPath: desktop.claudeAppPath, dedicatedBundle: false };
@@ -627,6 +643,7 @@ export function compileApp({
   dedicatedBundle = false,
   sourceAppPath = null,
   color = null,
+  identity = null,
 }) {
   // We write the AppleScript to a temp file then run `osacompile` to turn
   // it into a real .app bundle. osacompile is part of macOS, no install
@@ -645,7 +662,7 @@ export function compileApp({
   let helper = null;
   if (dedicatedBundle && sourceAppPath) {
     installHelper();
-    helper = helperSpecFor({ sourceAppPath, color, appPath });
+    helper = helperSpecFor({ sourceAppPath, color, appPath, identity: identity ? identity.bundleId : null });
   }
   const script = buildLaunchAppleScript(dataDir, claudeAppPath, codeConfigDir, ghConfigDir, dedicatedBundle, helper);
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "cp-"));
@@ -762,9 +779,11 @@ export function setupDesktop({
   ghConfigDir,
   color,
   seedConnectors = false,
+  identity = null,
 }) {
   // Wraps the whole setup. Returns a summary the wizard can save to the
-  // registry and print to the user.
+  // registry and print to the user. `identity` is "own" for a profile whose
+  // copy of Claude is its own app to macOS (src/identity.js), else null.
   step(`Creating Claude Desktop profile "${name}"`);
 
   info(`Data folder: ${pathStr(tildify(dataDir))}`);
@@ -810,10 +829,12 @@ export function setupDesktop({
   // because the blocks stay shared with the original.
   let launchTarget = claudeAppPath;
   let clonePath = null;
+  const ownIdentity = identity === "own" ? ownIdentityFor(name, appPath) : null;
   try {
-    clonePath = ensureColoredClone({ name, claudeAppPath, color: color || null });
+    clonePath = ensureColoredClone({ name, claudeAppPath, color: color || null, identity: ownIdentity });
     launchTarget = clonePath;
     ok(color ? `Claude clone ready (${color}).` : "Claude clone ready for this profile.");
+    if (ownIdentity) ok(`Its own app identity: ${ownIdentity.appName} (${ownIdentity.bundleId}).`);
   } catch (e) {
     warn(`Could not build this profile's Claude clone: ${e.message}`);
     warn("Falling back to the shared Claude.app. Each click will open a new window.");
@@ -830,6 +851,7 @@ export function setupDesktop({
     dedicatedBundle: Boolean(clonePath),
     sourceAppPath: claudeAppPath,
     color,
+    identity: clonePath ? ownIdentity : null,
   });
   ok("Launcher .app compiled.");
 
@@ -867,5 +889,5 @@ export function setupDesktop({
     }
   }
 
-  return { dataDir, appPath, claudeAppPath, color: color || null, clonePath };
+  return { dataDir, appPath, claudeAppPath, color: color || null, clonePath, identity: clonePath && ownIdentity ? "own" : null };
 }

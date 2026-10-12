@@ -27,6 +27,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { HOME, fileExists } from "./util.js";
 import { COLORS } from "./appclone.js";
+import { IDENTITY_JXA } from "./identity.js";
 
 // Bump when HELPER_JS changes, so doctor can tell a stale copy on disk.
 export const HELPER_VERSION = 2;
@@ -35,13 +36,17 @@ const TOOL_DIR = path.join(HOME, "Library", "Application Support", "claude-multi
 export const HELPER_PATH = path.join(TOOL_DIR, "bin", "launch.js");
 export const LAUNCH_LOG = path.join(TOOL_DIR, "launch.log");
 
-// What compileApp needs to route a launcher through the helper.
-export function helperSpecFor({ sourceAppPath, color, appPath }) {
+// What compileApp needs to route a launcher through the helper. `identity` is
+// the bundle ID of a profile with its own app identity (src/identity.js), or
+// null; the launcher hands it to the helper as CMP_LAUNCH_IDENTITY, and the
+// helper's label doubles as the app name.
+export function helperSpecFor({ sourceAppPath, color, appPath, identity = null }) {
   return {
     path: HELPER_PATH,
     source: sourceAppPath,
     hue: color && Object.prototype.hasOwnProperty.call(COLORS, color) ? String(COLORS[color]) : "",
     label: path.basename(appPath, ".app"),
+    identity: identity || null,
   };
 }
 
@@ -108,6 +113,10 @@ export function refreshLeftovers(clonePath) {
 // The open args are passed straight to /usr/bin/open as an array, so no path
 // is ever re-parsed by a shell.
 //
+// CMP_LAUNCH_IDENTITY=<bundle id> says the profile has its own app identity
+// (src/identity.js). A copy rebuilt here comes back with it, and a copy that
+// lacks it gets it before opening. The label is the app name.
+//
 // CMP_LAUNCH_DRY_RUN=1 prints the decision instead of acting.
 // CMP_LAUNCH_ASSUME=reopen|leave answers the wrong-account question without a
 // dialog. Both exist so the decisions can be tested without clicking.
@@ -163,6 +172,7 @@ function log(level, msg) {
   } catch (e) {}
 }
 
+${IDENTITY_JXA}
 function plistValue(appPath, key) {
   var d = $.NSDictionary.dictionaryWithContentsOfFile(appPath + '/Contents/Info.plist');
   if (d.isNil()) return null;
@@ -174,9 +184,12 @@ function version(appPath) { return plistValue(appPath, 'CFBundleShortVersionStri
 // Only ever open Claude. If the path handed to us is anything else (a
 // launcher, most dangerously this one), opening it would run the helper
 // again and loop. A missing copy is different: open fails harmlessly.
+// A copy with its own identity is ours too: com.claude-multiprofile.<name>
+// plus '.claude', which no launcher carries.
 function isClaude(appPath) {
   var id = plistValue(appPath, 'CFBundleIdentifier');
-  return id === null || id.indexOf('com.anthropic.') === 0;
+  if (id === null || id.indexOf('com.anthropic.') === 0) return true;
+  return id.indexOf('com.claude-multiprofile.') === 0 && id.slice(-7) === '.claude';
 }
 
 function compare(a, b) {
@@ -266,7 +279,7 @@ function recover(clone) {
 // After an interrupted attempt (see recover), this click opens the copy as it
 // is and the next one updates it, so whatever cut the last attempt short, the
 // profile still opens rather than failing the same way again.
-function refresh(clone, source, hue, interrupted) {
+function refresh(clone, source, hue, identity, interrupted) {
   var have = version(clone), want = version(source);
   if (!have || !want) { log('WARN', 'could not read versions (copy ' + have + ', source ' + want + '); opening as is'); return 'unknown'; }
   if (compare(have, want) >= 0) return 'current';
@@ -285,6 +298,8 @@ function refresh(clone, source, hue, interrupted) {
     try { app.doShellScript('/bin/cp -Rc ' + q(source) + ' ' + q(tmp)); }
     catch (e) { app.doShellScript('/bin/cp -R ' + q(source) + ' ' + q(tmp)); }
     if (version(tmp) !== want) throw new Error('the copy came out as ' + version(tmp) + ', not ' + want);
+    // Identity before colour: signing would seal the colour in as detritus.
+    if (identity) applyIdentity(tmp, identity, label);
     if (hue) tint(tmp, hue);
     if (exists(old)) app.doShellScript('/bin/rm -rf ' + q(old));
     app.doShellScript('/bin/mv ' + q(clone) + ' ' + q(old));
@@ -297,6 +312,22 @@ function refresh(clone, source, hue, interrupted) {
   } catch (e) {
     try { if (exists(tmp)) app.doShellScript('/bin/rm -rf ' + q(tmp)); } catch (e2) {}
     log('ERROR', 'could not update the copy from ' + have + ' to ' + want + ': ' + e.message + '; opening ' + have);
+    return 'failed';
+  }
+}
+
+// A copy that lacks the identity its profile wants (the profile was switched
+// while its copy was open, so the tool could not touch it). Done in place:
+// nothing is running from it, and a failure leaves a copy that still opens.
+function adopt(clone, identity, hue) {
+  try {
+    applyIdentity(clone, identity, label);
+    if (hue) tint(clone, hue);
+    try { app.doShellScript(q(LSREGISTER) + ' -f ' + q(clone)); } catch (e) {}
+    log('INFO', 'gave the copy its own identity (' + identity + ')');
+    return 'adopted';
+  } catch (e) {
+    log('ERROR', 'could not give the copy its own identity (' + identity + '): ' + e.message + '; opening as is');
     return 'failed';
   }
 }
@@ -343,6 +374,7 @@ function run(argv) {
   label = argv[4] || label;
   var openArgs = argv.slice(5);
   var dry = env('CMP_LAUNCH_DRY_RUN') === '1';
+  var identity = env('CMP_LAUNCH_IDENTITY');
   var interrupted = false;
   // First, because a copy cut off between the two moves is not where the
   // checks below expect it.
@@ -385,8 +417,10 @@ function run(argv) {
       }
       log('INFO', 'quit the wrong-account window; reopening on the profile');
     }
-    var r = refresh(clone, source, hue, interrupted);
-    if (dry) return 'not running: ' + r;
+    var r = refresh(clone, source, hue, identity, interrupted);
+    var wantsAdopt = identity && r !== 'refreshed' && plistValue(clone, 'CFBundleIdentifier') !== identity;
+    if (dry) return 'not running: ' + r + (wantsAdopt ? '; would-adopt ' + identity : '');
+    if (wantsAdopt) adopt(clone, identity, hue);
   } catch (e) {
     log('ERROR', 'unexpected: ' + e.message + '; opening as is');
     if (dry) return 'error: ' + e.message;

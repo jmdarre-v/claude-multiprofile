@@ -54,6 +54,8 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { HOME, fileExists, tildify, compareVersions } from "./util.js";
+import { runJxa } from "./jxa.js";
+import { applyOwnIdentity, readIdentity, identityKind } from "./identity.js";
 
 // Where per-profile clones live. Outside ~/Applications so they do not clutter
 // the app list the user browses; the launcher is the thing meant to be visible.
@@ -86,25 +88,7 @@ export function clonePathFor(profileName) {
   return path.join(CLONE_PARENT, `Claude ${profileName}.app`);
 }
 
-// ---- The JXA bridge --------------------------------------------------------
-
-function runJxa(script, args) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-jxa-"));
-  const file = path.join(tmp, "s.js");
-  fs.writeFileSync(file, script, "utf8");
-  try {
-    return execFileSync("/usr/bin/osascript", ["-l", "JavaScript", file, ...args], {
-      encoding: "utf8",
-      timeout: 60_000,
-    }).trim();
-  } finally {
-    try {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    } catch {
-      // Best effort; the OS clears its tmpdir.
-    }
-  }
-}
+// ---- The JXA scripts (run through src/jxa.js) --------------------------------
 
 const TINT_JS = `
 ObjC.import('AppKit');
@@ -238,7 +222,12 @@ export function cloneVersions(clonePath, claudeAppPath) {
 }
 
 // Create (or refresh) a profile's coloured clone. Returns the clone path.
-export function ensureColoredClone({ name, claudeAppPath, color, force = false }) {
+//
+// `identity` is the profile's own app identity ({ bundleId, appName }, see
+// src/identity.js), or null for Claude's own. It is applied to the copy after
+// building, and to an existing copy that lacks it. Going the other way needs
+// a fresh copy, because nothing else restores Anthropic's signature.
+export function ensureColoredClone({ name, claudeAppPath, color, force = false, identity = null }) {
   // A null colour is allowed: every Desktop profile gets its own bundle so the
   // launcher can target it specifically, and the tint is an optional extra on
   // top. Without a dedicated bundle there is no way to tell "this profile's
@@ -255,7 +244,12 @@ export function ensureColoredClone({ name, claudeAppPath, color, force = false }
   // Never rebuild a copy that is open: the delete below would pull the app
   // out from under it. Keeping the current copy is always safe, and the
   // launcher rebuilds it on the first click after it is quit.
-  const rebuild = (force || cloneIsStale(clonePath, claudeAppPath)) && !cloneIsRunning(clonePath);
+  const running = cloneIsRunning(clonePath);
+  let rebuild = (force || cloneIsStale(clonePath, claudeAppPath)) && !running;
+  if (!rebuild && !identity && !running && fileExists(clonePath)) {
+    const current = readIdentity(clonePath);
+    if (current && identityKind(current.bundleId) === "own") rebuild = true;
+  }
   if (rebuild) {
     fs.mkdirSync(CLONE_PARENT, { recursive: true });
     if (fileExists(clonePath)) fs.rmSync(clonePath, { recursive: true, force: true });
@@ -266,6 +260,12 @@ export function ensureColoredClone({ name, claudeAppPath, color, force = false }
       execFileSync("/bin/cp", ["-R", claudeAppPath, clonePath]);
     }
   }
+
+  // The identity goes on before the colour: signing would seal the colour's
+  // Finder metadata in as detritus, so applying it removes the colour first.
+  // An open copy is left alone, same as a rebuild; its launcher applies the
+  // identity the next time it starts, and doctor reports it until then.
+  if (identity && !running && fileExists(clonePath)) applyOwnIdentity(clonePath, identity);
 
   // Tint from the copy's own icon, not the source's. A copy that updated
   // itself can be a newer build than /Applications, and its icon is the one
