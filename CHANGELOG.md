@@ -28,8 +28,12 @@ project is pre-1.0, so minor breakage may occur between 0.x releases.
   provisioning profile dropped and the hardened runtime off, and its
   designated requirement set to the identifier alone so a copy rebuilt after
   a Claude update is the same app to TCC and the Keychain. The launch helper
-  (v2) applies the identity when it rebuilds a copy, and adopts a copy that
-  lacks the identity its profile wants. `doctor` checks that the registry,
+  (v3) applies the identity when it rebuilds a copy, and adopts a copy that
+  lacks the identity its profile wants. The identity is always applied to a
+  clone beside the copy and swapped in only once its signature verifies, so
+  a failure or a cut-off run leaves the copy as it was; an adoption is
+  logged before it starts, so `doctor` reports one that was cut off, and
+  the click after a cut opens the copy as is and adopts on the next. `doctor` checks that the registry,
   the copy and the launcher agree, and `doctor --fix` repairs drift.
   `identity <name> shared` rebuilds the copy from `/Applications/Claude.app`,
   the only thing that restores Anthropic's signature.

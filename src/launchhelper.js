@@ -30,7 +30,7 @@ import { COLORS } from "./appclone.js";
 import { IDENTITY_JXA } from "./identity.js";
 
 // Bump when HELPER_JS changes, so doctor can tell a stale copy on disk.
-export const HELPER_VERSION = 2;
+export const HELPER_VERSION = 3;
 
 const TOOL_DIR = path.join(HOME, "Library", "Application Support", "claude-multiprofile");
 export const HELPER_PATH = path.join(TOOL_DIR, "bin", "launch.js");
@@ -89,15 +89,16 @@ export function recentLaunchLog({ sinceMs = 7 * 24 * 3600 * 1000, levels = null 
     .filter((e) => e && e.at >= cutoff && (!levels || levels.includes(e.level)));
 }
 
-// The newest update a launcher started and never finished: an "updating" line
-// with no outcome after it. Only a helper that died part-way leaves one, since
-// both the success and the failure path log a line of their own.
+// The newest update or identity adoption a launcher started and never
+// finished: a starting line with no outcome after it. Only a helper that died
+// part-way leaves one, since both the success and the failure path log a line
+// of their own.
 export function unfinishedRefresh(label, entries = recentLaunchLog()) {
   let pending = null;
   for (const e of entries) {
     if (e.label !== label) continue;
-    if (e.message.startsWith("updating the copy from ")) pending = e;
-    else if (/^(updated the copy|could not update the copy)/.test(e.message)) pending = null;
+    if (/^(updating the copy from |giving the copy its own identity )/.test(e.message)) pending = e;
+    else if (/^(updated the copy|could not update the copy|gave the copy|could not give the copy)/.test(e.message)) pending = null;
   }
   return pending;
 }
@@ -317,11 +318,17 @@ function refresh(clone, source, hue, identity, interrupted) {
 }
 
 // A copy that lacks the identity its profile wants (the profile was switched
-// while its copy was open, so the tool could not touch it). Done in place:
-// nothing is running from it, and a failure leaves a copy that still opens.
-function adopt(clone, identity, hue) {
+// while its copy was open, so the tool could not touch it). Staged beside the
+// copy like an update, so a failure, or a cut, leaves it as it was.
+function adopt(clone, identity, hue, interrupted) {
+  if (interrupted) {
+    log('WARN', 'opening the copy as is this time; it gets its own identity on the next click');
+    return 'deferred';
+  }
+  // Logged before any work, like an update, for doctor to find.
+  log('INFO', 'giving the copy its own identity (' + identity + ')');
   try {
-    applyIdentity(clone, identity, label);
+    applyIdentityStaged(clone, identity, label);
     if (hue) tint(clone, hue);
     try { app.doShellScript(q(LSREGISTER) + ' -f ' + q(clone)); } catch (e) {}
     log('INFO', 'gave the copy its own identity (' + identity + ')');
@@ -420,7 +427,7 @@ function run(argv) {
     var r = refresh(clone, source, hue, identity, interrupted);
     var wantsAdopt = identity && r !== 'refreshed' && plistValue(clone, 'CFBundleIdentifier') !== identity;
     if (dry) return 'not running: ' + r + (wantsAdopt ? '; would-adopt ' + identity : '');
-    if (wantsAdopt) adopt(clone, identity, hue);
+    if (wantsAdopt) adopt(clone, identity, hue, interrupted);
   } catch (e) {
     log('ERROR', 'unexpected: ' + e.message + '; opening as is');
     if (dry) return 'error: ' + e.message;

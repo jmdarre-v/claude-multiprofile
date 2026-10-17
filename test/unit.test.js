@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync as execFileSyncForTests } from "node:child_process";
 
 // Some tests deliberately drive refusal paths (a corrupt settings.json, a
 // symlink pointing out of the profile), and those paths warn on purpose:
@@ -2467,4 +2468,101 @@ test("applyOwnIdentity: re-identifies and re-signs a real app bundle, helpers in
   assert.ok(!fs.existsSync(path.join(app, "Contents", "embedded.provisionprofile")));
   // Idempotent: the same identity again is a no-op, not a second re-sign.
   assert.equal(quietly(() => applyOwnIdentity(app, identity)), "already");
+});
+
+// A copy of Calculator.app with a stand-in Electron helper, named after the
+// main bundle the way Electron names them. Returns null off macOS.
+function fakeElectronApp(root) {
+  if (process.platform !== "darwin" || !fs.existsSync("/System/Applications/Calculator.app")) return null;
+  const app = path.join(root, "Calc.app");
+  execFileSyncForTests("/bin/cp", ["-R", "/System/Applications/Calculator.app", app]);
+  const helper = path.join(app, "Contents", "Frameworks", "Calculator Helper (GPU).app");
+  fs.mkdirSync(path.join(helper, "Contents", "MacOS"), { recursive: true });
+  fs.copyFileSync(path.join(app, "Contents", "MacOS", "Calculator"), path.join(helper, "Contents", "MacOS", "Calculator Helper (GPU)"));
+  fs.writeFileSync(
+    path.join(helper, "Contents", "Info.plist"),
+    `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.apple.calculator.helper</string><key>CFBundleExecutable</key><string>Calculator Helper (GPU)</string><key>CFBundleName</key><string>Calculator Helper (GPU)</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>`
+  );
+  return { app, helper };
+}
+
+test("applyOwnIdentity: a failure part-way leaves the copy exactly as it was (#22 review, 3)", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-identity-fail-"));
+  t.after(() => {
+    execFileSyncForTests("/bin/chmod", ["-R", "u+w", root]);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const fake = fakeElectronApp(root);
+  if (!fake) {
+    t.skip("needs macOS and a stock app to copy");
+    return;
+  }
+  const { applyOwnIdentity, readIdentity, signatureValid } = await import("../src/identity.js");
+  const before = readIdentity(fake.app);
+  const signedBefore = signatureValid(fake.app);
+  // The helper's folder renames fine, but its Info.plist cannot be rewritten:
+  // the work fails after the first change to the bundle.
+  fs.chmodSync(path.join(fake.helper, "Contents"), 0o555);
+
+  assert.throws(() => quietly(() => applyOwnIdentity(fake.app, { bundleId: "com.claude-multiprofile.t.claude", appName: "Calc T" })));
+  assert.deepEqual(readIdentity(fake.app), before, "Info.plist untouched");
+  assert.ok(fs.existsSync(fake.helper), "helper keeps the name Electron looks for");
+  assert.ok(!fs.existsSync(path.join(fake.app, "Contents", "Frameworks", "Calc T Helper (GPU).app")), "no half-renamed helper");
+  assert.equal(signatureValid(fake.app), signedBefore, "the signature is as it was");
+  assert.deepEqual(fs.readdirSync(root).sort(), ["Calc.app"], "nothing left beside the copy");
+});
+
+test("unfinishedRefresh: an identity adoption cut off part-way counts too (#22 review, 4)", async () => {
+  const { unfinishedRefresh } = await import("../src/launchhelper.js");
+  const e = (message) => ({ at: 0, label: "Claude W", level: "INFO", message });
+  const start = "giving the copy its own identity (com.claude-multiprofile.w.claude)";
+  assert.equal(unfinishedRefresh("Claude W", [e(start)]).message, start);
+  assert.equal(unfinishedRefresh("Claude W", [e(start), e("gave the copy its own identity (com.claude-multiprofile.w.claude)")]), null);
+  assert.equal(unfinishedRefresh("Claude W", [e(start), e("could not give the copy its own identity (x): y; opening as is")]), null);
+});
+
+test("launch helper: adopting an identity is staged, logged first, and waits a click after a cut (#22 review, 3 and 4)", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("osascript is macOS only");
+    return;
+  }
+  const { HELPER_JS } = await import("../src/launchhelper.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-adopt-"));
+  t.after(() => {
+    execFileSyncForTests("/bin/chmod", ["-R", "u+w", root]);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const helper = path.join(root, "launch.js");
+  fs.writeFileSync(helper, HELPER_JS);
+  const logFile = path.join(root, "launch.log");
+  const plist = `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.anthropic.claudefordesktop</string><key>CFBundleName</key><string>Claude</string><key>CFBundleShortVersionString</key><string>2.0.0</string></dict></plist>`;
+  const source = path.join(root, "Source.app");
+  const clone = path.join(root, "Claude w.app");
+  for (const app of [source, clone]) {
+    fs.mkdirSync(path.join(app, "Contents"), { recursive: true });
+    fs.writeFileSync(path.join(app, "Contents", "Info.plist"), plist);
+  }
+  const own = "com.claude-multiprofile.w.claude";
+  const click = () =>
+    execFileSyncForTests("/usr/bin/osascript", ["-l", "JavaScript", helper, clone, source, "", path.join(root, "data"), "Claude W", "-a", clone], {
+      encoding: "utf8",
+      env: { ...process.env, CMP_LAUNCH_LOG: logFile, CMP_LAUNCH_IDENTITY: own },
+    }).trim();
+
+  // Right after a cut-off run: open as is, adopt on the next click.
+  fs.mkdirSync(clone + ".refreshing");
+  assert.equal(click(), "opened");
+  let log = fs.readFileSync(logFile, "utf8");
+  assert.match(log, /removed what it left behind/);
+  assert.doesNotMatch(log, /giving the copy its own identity/, "no adoption on the click after a cut");
+  assert.match(log, /gets its own identity on the next click/);
+
+  // Next click: adoption runs and fails part-way (its Info.plist cannot be
+  // rewritten), and the copy is untouched.
+  fs.chmodSync(path.join(clone, "Contents"), 0o555);
+  assert.equal(click(), "opened");
+  log = fs.readFileSync(logFile, "utf8");
+  assert.match(log, /giving the copy its own identity \(com\.claude-multiprofile\.w\.claude\)[\s\S]*could not give the copy its own identity/, "logged before and after");
+  assert.equal(fs.readFileSync(path.join(clone, "Contents", "Info.plist"), "utf8"), plist, "Info.plist untouched");
+  assert.deepEqual(fs.readdirSync(root).sort(), ["Claude w.app", "Source.app", "launch.js", "launch.log"], "nothing left beside the copy");
 });
