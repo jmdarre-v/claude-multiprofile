@@ -290,14 +290,48 @@ function applyIdentity(appPath, bundleId, appName) {
   }
   return 'applied';
 }
+
+// Remove a staged or previous copy, read-only folders and all.
+function idDiscard(p) {
+  if (idExists(p)) idSh('/bin/chmod -R u+w ' + idQ(p) + ' && /bin/rm -rf ' + idQ(p));
+}
+
+// applyIdentity for a copy that is in use as a profile's app. The identity is
+// applied to a clone beside it, which is swapped in only once its signature
+// verifies, so a failure at any step leaves the copy exactly as it was:
+// applyIdentity renames the helpers and rewrites Info.plist before it signs,
+// and a copy cut off in between does not start. Same scheme and leftover
+// names as the launch helper's refresh, which cleans up after a cut-off run.
+function applyIdentityStaged(appPath, bundleId, appName) {
+  var current = identityOf(appPath);
+  if (!current) throw new Error('no Info.plist in ' + appPath);
+  if (current.bundleId === bundleId && current.name === appName) return 'already';
+  var tmp = appPath + '.refreshing', old = appPath + '.previous';
+  try {
+    idDiscard(tmp);
+    try { idSh('/bin/cp -Rc ' + idQ(appPath) + ' ' + idQ(tmp)); }
+    catch (e) { idSh('/bin/cp -R ' + idQ(appPath) + ' ' + idQ(tmp)); }
+    applyIdentity(tmp, bundleId, appName);
+    idDiscard(old);
+    idSh('/bin/mv ' + idQ(appPath) + ' ' + idQ(old));
+    try { idSh('/bin/mv ' + idQ(tmp) + ' ' + idQ(appPath)); }
+    catch (e) { idSh('/bin/mv ' + idQ(old) + ' ' + idQ(appPath)); throw e; }
+  } catch (e) {
+    try { idDiscard(tmp); } catch (e2) {}
+    throw e;
+  }
+  idDiscard(old);
+  return 'applied';
+}
 `;
 
 const IDENTITY_RUNNER = `
-function run(argv) { return applyIdentity(argv[0], argv[1], argv[2]); }
+function run(argv) { return applyIdentityStaged(argv[0], argv[1], argv[2]); }
 `;
 
 // Apply an identity to a copy on disk. Returns "applied" or "already".
-// Signing hashes the whole app, so give it time.
+// Signing hashes the whole app, so give it time. Staged: on failure the copy
+// is left as it was.
 export function applyOwnIdentity(appPath, { bundleId, appName }) {
   const out = runJxa(IDENTITY_JXA + IDENTITY_RUNNER, [appPath, bundleId, appName], { timeout: 300_000 });
   if (out !== "applied" && out !== "already") throw new Error(out || "no result from the identity script");
