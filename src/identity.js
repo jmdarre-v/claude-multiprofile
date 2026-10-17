@@ -80,6 +80,8 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { runJxa } from "./jxa.js";
 import {
   ensureSigningIdentity,
+  findSigningIdentity,
+  copyAnchoredTo,
   explainSigningError,
   parseSigningIdentity,
   designatedRequirement,
@@ -175,6 +177,17 @@ export function identityStatus({ wanted, actual, signed, anchored }) {
   if (signed === false) return "unsigned";
   if (anchored === false) return "unanchored";
   return "ok";
+}
+
+// Where a copy on disk stands against what its profile wants, checking its
+// signature and that it is signed with this Mac's key only when it carries
+// the wanted bundle ID. `signer` is this Mac's key, or null when it has none.
+export function checkCopyIdentity(clonePath, wanted) {
+  const actual = readIdentity(clonePath);
+  const signed = wanted && actual && actual.bundleId === wanted.bundleId ? signatureValid(clonePath) : null;
+  const signer = signed ? findSigningIdentity() : null;
+  const anchored = signed ? Boolean(signer) && copyAnchoredTo(clonePath, signer) : null;
+  return { actual, signer, state: identityStatus({ wanted, actual, signed, anchored }) };
 }
 
 // ---- The JXA ------------------------------------------------------------------

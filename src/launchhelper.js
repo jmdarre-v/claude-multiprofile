@@ -252,8 +252,9 @@ function tint(appPath, hue) {
   if (!ok) throw new Error('could not set the icon');
 }
 
-// An update cut off part-way (#13: a launcher that quit and took the helper
-// with it) leaves folders behind. Put the copy back if the cut fell between
+// An update or an identity adoption cut off part-way (#13: a launcher that
+// quit and took the helper with it) leaves folders behind; both use the same
+// .refreshing and .previous names. Put the copy back if the cut fell between
 // the two moves, clear what is left, and say so, so a helper that dies is
 // noticed on the next click instead of never.
 function recover(clone) {
@@ -261,12 +262,12 @@ function recover(clone) {
   var interrupted = false;
   if (!exists(clone) && exists(old)) {
     app.doShellScript('/bin/mv ' + q(old) + ' ' + q(clone));
-    log('WARN', 'an earlier update stopped between swapping the copies; put the previous copy back');
+    log('WARN', 'an earlier update or identity change stopped between swapping the copies; put the previous copy back');
     interrupted = true;
   }
   if (exists(tmp)) {
     app.doShellScript('/bin/rm -rf ' + q(tmp));
-    log('WARN', 'an earlier update stopped part-way; removed what it left behind');
+    log('WARN', 'an earlier update or identity change stopped part-way; removed what it left behind');
     interrupted = true;
   }
   if (exists(old) && exists(clone)) app.doShellScript('/bin/rm -rf ' + q(old));
@@ -337,6 +338,14 @@ function adopt(clone, identity, hue, interrupted) {
     log('ERROR', 'could not give the copy its own identity (' + identity + '): ' + e.message + '; opening as is');
     return 'failed';
   }
+}
+
+// The copy carries the identity and is signed with this Mac's key. A copy
+// signed by an earlier version, or before the key was made again, has a
+// requirement any program can meet, so it is adopted (re-signed) too.
+function hasIdentity(clone, identity) {
+  if (plistValue(clone, 'CFBundleIdentifier') !== identity) return false;
+  try { return idAnchored(clone, idSigner()); } catch (e) { return false; }
 }
 
 function quit(pids) {
@@ -425,7 +434,7 @@ function run(argv) {
       log('INFO', 'quit the wrong-account window; reopening on the profile');
     }
     var r = refresh(clone, source, hue, identity, interrupted);
-    var wantsAdopt = identity && r !== 'refreshed' && plistValue(clone, 'CFBundleIdentifier') !== identity;
+    var wantsAdopt = identity && r !== 'refreshed' && !hasIdentity(clone, identity);
     if (dry) return 'not running: ' + r + (wantsAdopt ? '; would-adopt ' + identity : '');
     if (wantsAdopt) adopt(clone, identity, hue, interrupted);
   } catch (e) {

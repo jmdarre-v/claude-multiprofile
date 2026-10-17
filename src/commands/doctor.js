@@ -71,13 +71,10 @@ import {
   runningCopies,
   cloneIsRunning,
 } from "../appclone.js";
-import { findSigningIdentity, copyAnchoredTo } from "../signing.js";
 import {
   wantsOwnIdentity,
   ownIdentityFor,
-  readIdentity,
-  identityStatus,
-  signatureValid,
+  checkCopyIdentity,
 } from "../identity.js";
 import { resyncDenyRules, auditDenyRules, readProtectionEnabled } from "../permissions.js";
 import { updateBlockState, blockUpdates, wantsUpdateBlock } from "../updates.js";
@@ -949,13 +946,9 @@ function checkIdentities(t, reg, fix) {
   for (const p of desktop) {
     const clone = clonePathFor(p.name);
     const wanted = identityFor(p);
-    const actual = readIdentity(clone);
-    const signed = wanted && actual && actual.bundleId === wanted.bundleId ? signatureValid(clone) : null;
-    // Signed with this Mac's key (src/signing.js)? A copy signed before the
-    // key existed has a requirement anyone can meet.
-    const signer = signed ? findSigningIdentity() : null;
-    const anchored = signed ? Boolean(signer) && copyAnchoredTo(clone, signer) : null;
-    const state = identityStatus({ wanted, actual, signed, anchored });
+    // Includes whether it is signed with this Mac's key (src/signing.js): a
+    // copy signed before the key existed has a requirement anyone can meet.
+    const { actual, signer, state } = checkCopyIdentity(clone, wanted);
     const running = cloneIsRunning(clone);
 
     if (state === "needs-own" || state === "needs-shared" || state === "unsigned" || state === "unanchored") {
