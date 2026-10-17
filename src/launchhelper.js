@@ -27,7 +27,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { HOME, fileExists } from "./util.js";
 import { COLORS } from "./appclone.js";
-import { IDENTITY_JXA } from "./identity.js";
+import { IDENTITY_JXA, OWN_BUNDLE_PREFIX, OWN_BUNDLE_SUFFIX } from "./identity.js";
 
 // Bump when HELPER_JS changes, so doctor can tell a stale copy on disk.
 export const HELPER_VERSION = 3;
@@ -185,12 +185,13 @@ function version(appPath) { return plistValue(appPath, 'CFBundleShortVersionStri
 // Only ever open Claude. If the path handed to us is anything else (a
 // launcher, most dangerously this one), opening it would run the helper
 // again and loop. A missing copy is different: open fails harmlessly.
-// A copy with its own identity is ours too: com.claude-multiprofile.<name>
-// plus '.claude', which no launcher carries.
+// A copy with its own identity is ours too: ${OWN_BUNDLE_PREFIX}<name>
+// plus '${OWN_BUNDLE_SUFFIX}', which no launcher carries (src/identity.js).
 function isClaude(appPath) {
   var id = plistValue(appPath, 'CFBundleIdentifier');
   if (id === null || id.indexOf('com.anthropic.') === 0) return true;
-  return id.indexOf('com.claude-multiprofile.') === 0 && id.slice(-7) === '.claude';
+  var prefix = '${OWN_BUNDLE_PREFIX}', suffix = '${OWN_BUNDLE_SUFFIX}';
+  return id.indexOf(prefix) === 0 && id.slice(-suffix.length) === suffix;
 }
 
 function compare(a, b) {
