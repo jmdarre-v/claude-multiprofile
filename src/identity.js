@@ -209,18 +209,13 @@ function idPlist(p) { return $.NSMutableDictionary.dictionaryWithContentsOfFile(
 function idStr(d, key) { var v = d.objectForKey(key); return v.isNil() ? null : String(v.js); }
 function idSet(d, key, value) { d.setObjectForKey($(value), key); }
 function idRemove(p) { if (idExists(p)) idFm.removeItemAtPathError(p, null); }
-function idEnv(name) {
-  var v = $.NSProcessInfo.processInfo.environment.objectForKey(name);
-  return v.isNil() ? '' : v.js;
-}
 
 // This Mac's signing key (src/signing.js), found the same way as from Node.
 ${parseSigningIdentity.toString()}
 ${designatedRequirement.toString()}
 ${requirementAnchored.toString()}
+// Never from the environment: see src/signing.js.
 function idSigner() {
-  var forced = idEnv('CMP_SIGNING_IDENTITY');
-  if (forced) return forced;
   var out = '';
   try { out = idSh('/usr/bin/security find-identity -p codesigning'); } catch (e) {}
   var hash = parseSigningIdentity(out);
@@ -422,9 +417,9 @@ function run(argv) { return applyIdentityStaged(argv[0], argv[1], argv[2], argv[
 // Apply an identity to a copy on disk. Returns "applied" or "already".
 // Signing hashes the whole app, so give it time. Staged: on failure the copy
 // is left as it was.
-export function applyOwnIdentity(appPath, { bundleId, appName }) {
-  // Made on first use; signing asks for the login keychain password.
-  const { hash: signer } = ensureSigningIdentity();
+// `signer` is for tests only: "-" signs ad hoc (src/signing.js).
+export function applyOwnIdentity(appPath, { bundleId, appName }, { signer = ensureSigningIdentity().hash } = {}) {
+  // The key is made on first use; signing asks for the login keychain password.
   let out;
   try {
     out = runJxa(IDENTITY_JXA + IDENTITY_RUNNER, [appPath, bundleId, appName, signer], { timeout: 300_000 });
