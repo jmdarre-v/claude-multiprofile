@@ -15,13 +15,13 @@
 //     its certificate is trusted, and a requirement on the leaf hash does not
 //     care about trust either, so nothing here asks to change trust settings
 //     (which needs an administrator).
-//   - Not extractable (-x), and imported without pre-authorising any
-//     application (no -T). That is what makes it worth having: every use of
-//     the key asks for the login keychain password. Pre-authorising
-//     /usr/bin/codesign would let any process run codesign with the key
-//     silently, which is the identifier-only weakness over again. Measured
-//     2026-10-17: with -T the key signed silently from a plain shell; without
-//     it, codesign waited on the keychain prompt.
+//   - Not extractable (-x), and trusted to no application (-T ""). That is
+//     what makes it worth having: every use of the key asks for the login
+//     keychain password. Any trusted application would be a way around it,
+//     since any process can run it: with -T /usr/bin/codesign the key signed
+//     silently from a plain shell, and with no -T at all `security import`
+//     trusts itself, so `security cms -S` signed with the key silently.
+//     With -T "" both wait on the keychain prompt (measured 2026-10-17).
 //
 // The cost is that prompt once per Claude update, when the launcher re-signs
 // the copy: only the main bundle is signed with the key (TCC and the Keychain
@@ -29,8 +29,10 @@
 // prompt, not one per bundle. "Always Allow" on it would add codesign to the
 // key's access list and undo the point; the README says not to.
 //
-// CMP_SIGNING_IDENTITY=- signs ad hoc with an identifier-only requirement.
-// For tests and CI, which have no key; never set by the tool itself.
+// Tests and CI have no key: they pass { signer: "-" } to applyOwnIdentity,
+// which signs ad hoc with an identifier-only requirement. Deliberately not
+// an environment variable: the launch helper runs with whatever environment
+// launchd gives it, which any process of the user's can change.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -74,9 +76,8 @@ export function requirementAnchored(text, leaf) {
 
 // ---- Node side -------------------------------------------------------------------
 
-// The signer to use: the test override, or this Mac's key, or null.
+// This Mac's key, or null.
 export function findSigningIdentity() {
-  if (process.env.CMP_SIGNING_IDENTITY) return process.env.CMP_SIGNING_IDENTITY;
   try {
     return parseSigningIdentity(
       execFileSync(SECURITY, ["find-identity", "-p", "codesigning"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })
@@ -123,9 +124,10 @@ export function ensureSigningIdentity() {
     // -name labels the key, so set-key-partition-list below can pick it out
     // of the keychain by a label no other key has.
     execFileSync(OPENSSL, ["pkcs12", "-export", "-name", SIGNING_NAME, "-inkey", key, "-in", cert, "-out", p12, "-passout", `pass:${pass}`], { stdio: "pipe" });
-    // -x: not extractable. No -T, no -A: no application may use it unasked.
-    // No -f pkcs12 either: with it, security drops the label (measured).
-    execFileSync(SECURITY, ["import", p12, "-k", LOGIN_KEYCHAIN, "-P", pass, "-x"], { stdio: "pipe" });
+    // -x: not extractable. -T "": no application may use it unasked, not
+    // even `security` itself, which an import without -T trusts. No -f
+    // pkcs12: with it, security drops the label (measured).
+    execFileSync(SECURITY, ["import", p12, "-k", LOGIN_KEYCHAIN, "-P", pass, "-x", "-T", ""], { stdio: "pipe" });
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

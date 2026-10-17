@@ -6,13 +6,14 @@
 // generation, registry round-tripping, and rc-file editing.
 
 import { test } from "node:test";
-// Real signing in tests is ad hoc: CI has no signing key (src/signing.js).
-process.env.CMP_SIGNING_IDENTITY ??= "-";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync as execFileSyncForTests } from "node:child_process";
+
+// Real signing in tests is ad hoc: CI has no signing key (src/signing.js).
+const ADHOC = { signer: "-" };
 
 // Some tests deliberately drive refusal paths (a corrupt settings.json, a
 // symlink pointing out of the profile), and those paths warn on purpose:
@@ -2456,7 +2457,7 @@ test("applyOwnIdentity: re-identifies and re-signs a real app bundle, helpers in
   );
   const identity = { bundleId: "com.claude-multiprofile.t.claude", appName: "Calc T" };
 
-  assert.equal(quietly(() => applyOwnIdentity(app, identity)), "applied");
+  assert.equal(quietly(() => applyOwnIdentity(app, identity, ADHOC)), "applied");
   assert.deepEqual(readIdentity(app), { bundleId: identity.bundleId, name: identity.appName });
   assert.ok(fs.existsSync(path.join(app, "Contents", "Frameworks", "Calc T Helper (GPU).app", "Contents", "MacOS", "Calc T Helper (GPU)")), "helper renamed, executable too");
   assert.ok(!fs.existsSync(helper), "old helper name gone");
@@ -2469,7 +2470,7 @@ test("applyOwnIdentity: re-identifies and re-signs a real app bundle, helpers in
   assert.ok(!entitlements.includes("com.apple.private."), "Apple-private entitlements dropped");
   assert.ok(!fs.existsSync(path.join(app, "Contents", "embedded.provisionprofile")));
   // Idempotent: the same identity again is a no-op, not a second re-sign.
-  assert.equal(quietly(() => applyOwnIdentity(app, identity)), "already");
+  assert.equal(quietly(() => applyOwnIdentity(app, identity, ADHOC)), "already");
 });
 
 // A copy of Calculator.app with a stand-in Electron helper, named after the
@@ -2506,7 +2507,7 @@ test("applyOwnIdentity: a failure part-way leaves the copy exactly as it was (#2
   // the work fails after the first change to the bundle.
   fs.chmodSync(path.join(fake.helper, "Contents"), 0o555);
 
-  assert.throws(() => quietly(() => applyOwnIdentity(fake.app, { bundleId: "com.claude-multiprofile.t.claude", appName: "Calc T" })));
+  assert.throws(() => quietly(() => applyOwnIdentity(fake.app, { bundleId: "com.claude-multiprofile.t.claude", appName: "Calc T" }, ADHOC)));
   assert.deepEqual(readIdentity(fake.app), before, "Info.plist untouched");
   assert.ok(fs.existsSync(fake.helper), "helper keeps the name Electron looks for");
   assert.ok(!fs.existsSync(path.join(fake.app, "Contents", "Frameworks", "Calc T Helper (GPU).app")), "no half-renamed helper");
@@ -2578,7 +2579,7 @@ test("applyOwnIdentity: hardened runtime stays on; only library validation is re
     return;
   }
   const { applyOwnIdentity } = await import("../src/identity.js");
-  quietly(() => applyOwnIdentity(fake.app, { bundleId: "com.claude-multiprofile.t.claude", appName: "Calc T" }));
+  quietly(() => applyOwnIdentity(fake.app, { bundleId: "com.claude-multiprofile.t.claude", appName: "Calc T" }, ADHOC));
   const helper = path.join(fake.app, "Contents", "Frameworks", "Calc T Helper (GPU).app");
   for (const bundle of [fake.app, helper]) {
     // codesign -dv reports on stderr.
