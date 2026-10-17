@@ -333,13 +333,11 @@ export async function rename(args = []) {
     }
 
     // A copy with its own identity keeps its bundle ID, so its permissions
-    // stay. Its app name follows the launcher, and Electron names the copy's
-    // Keychain entry after it ("<name> Safe Storage"), so the renamed profile
-    // cannot read what it stored under the old name and signs in again.
+    // stay; its app name follows the launcher. The Keychain entry is not
+    // affected: it is named after Claude's product name (src/identity.js).
     if (wantsOwnIdentity(profile.desktop) && fileExists(newClone)) {
       try {
         const own = ownIdentityFor(newName, newDesktop);
-        const before = ownIdentityFor(oldName, { ...newDesktop, appPath: profile.desktop.appPath });
         ensureColoredClone({
           name: newName,
           claudeAppPath: profile.desktop.claudeAppPath,
@@ -347,9 +345,6 @@ export async function rename(args = []) {
           identity: own,
         });
         ok("Its copy's name now matches the new launcher; its bundle ID and permissions are unchanged.");
-        if (own.appName !== before.appName) {
-          warn(`${own.appName} will ask you to sign in again: its Keychain entry is named after the app.`);
-        }
       } catch (e) {
         warn(`Could not update its copy's identity: ${e.message}`);
         info(`Run ${command("claude-multiprofile doctor --fix")} to apply it.`);

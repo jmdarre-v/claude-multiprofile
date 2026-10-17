@@ -160,13 +160,15 @@ export async function identity(args) {
   console.log("");
   if (wantOwn) {
     explain(`
-      ${own.appName} is now a separate application to macOS. Two one-off
-      effects on the next launch:
+      ${own.appName} is now a separate application to macOS. Two effects on
+      the next launch:
 
         - It asks for its permissions again (Screen Recording, Accessibility,
           folders): the grants belonged to Claude, and this is a new app.
-        - It asks you to sign in again: its encrypted storage was keyed to the
-          shared "Claude Safe Storage" Keychain entry, and it now has its own.
+        - macOS asks whether it may use the "Claude Safe Storage" Keychain
+          entry, which it still shares with your main Claude (Electron names
+          it after Claude's product name). Your login password allows it;
+          Deny makes it ask you to sign in.
 
       From then on, a permission change, a quit, or an AppleScript addressed
       to one of them reaches that one alone, and the menu bar says which is

@@ -23,10 +23,13 @@ project is pre-1.0, so minor breakage may occur between 0.x releases.
   the copy its own identity: bundle ID `com.claude-multiprofile.<name>.claude`,
   the launcher's name in the menu bar and Dock (its helper apps are renamed
   with it, since Electron finds them by the app name), its own permission
-  grants and its own `<name> Safe Storage` Keychain entry. The copy is
+  grants. (Not its own Keychain entry: Electron names that after the
+  product name built into Claude, so the copy still uses `Claude Safe
+  Storage`, and macOS asks before it reads it.) The copy is
   re-signed ad hoc for that, with the entitlements that need Apple's
-  provisioning profile dropped and the hardened runtime off, and its
-  designated requirement set to the identifier alone so a copy rebuilt after
+  provisioning profile dropped, the hardened runtime kept with library
+  validation relaxed for Claude's Anthropic-signed native modules (`DYLD_*`
+  injection stays blocked), and its designated requirement set to the identifier alone so a copy rebuilt after
   a Claude update is the same app to TCC and the Keychain. The launch helper
   (v3) applies the identity when it rebuilds a copy, and adopts a copy that
   lacks the identity its profile wants. The identity is always applied to a
