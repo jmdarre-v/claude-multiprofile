@@ -6,6 +6,8 @@
 // generation, registry round-tripping, and rc-file editing.
 
 import { test } from "node:test";
+// Real signing in tests is ad hoc: CI has no signing key (src/signing.js).
+process.env.CMP_SIGNING_IDENTITY ??= "-";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -2617,4 +2619,47 @@ test("rename: a profile with its own identity keeps its bundle ID, recorded or n
   // A shared profile gets nothing new.
   const shared = planRenamePaths({ ...profile({}), desktop: { ...profile({}).desktop, identity: undefined } }, "work", "client").newDesktop;
   assert.equal(shared.bundleId, undefined);
+});
+
+test("signing: finds this Mac's signing key, untrusted or not, and only ours (#22 review, 1)", async () => {
+  const { parseSigningIdentity, SIGNING_NAME } = await import("../src/signing.js");
+  const out = `
+Policy: Code Signing
+  Matching identities
+  1) 1111111111111111111111111111111111111111 "Apple Development: someone (ABCDE12345)"
+  2) 9CA421ECB88A2FAE96E782B8DD197F0649245B99 "${SIGNING_NAME}" (CSSMERR_TP_NOT_TRUSTED)
+     2 identities found
+
+  Valid identities only
+  1) 1111111111111111111111111111111111111111 "Apple Development: someone (ABCDE12345)"
+     1 valid identities found
+`;
+  // Self-signed, so never "valid": what matters is that codesign can sign with it.
+  assert.equal(parseSigningIdentity(out), "9CA421ECB88A2FAE96E782B8DD197F0649245B99");
+  assert.equal(parseSigningIdentity(out.replace(SIGNING_NAME, "something else")), null);
+  assert.equal(parseSigningIdentity("     0 identities found\n"), null);
+});
+
+test("signing: the designated requirement is anchored to the key, not the bundle ID alone (#22 review, 1)", async () => {
+  const { designatedRequirement, requirementAnchored } = await import("../src/signing.js");
+  const leaf = "9CA421ECB88A2FAE96E782B8DD197F0649245B99";
+  assert.equal(
+    designatedRequirement("com.claude-multiprofile.work.claude", leaf),
+    'identifier "com.claude-multiprofile.work.claude" and certificate leaf = H"9ca421ecb88a2fae96e782b8dd197f0649245b99"'
+  );
+  // What codesign -d -r- prints for a copy signed that way, and for one signed before.
+  const anchored = 'designated => identifier "com.claude-multiprofile.work.claude" and certificate leaf = H"9ca421ecb88a2fae96e782b8dd197f0649245b99"\n';
+  assert.equal(requirementAnchored(anchored, leaf), true);
+  assert.equal(requirementAnchored('designated => identifier "com.claude-multiprofile.work.claude"\n', leaf), false, "claimable by anyone");
+  assert.equal(requirementAnchored(anchored, "0000000000000000000000000000000000000000"), false, "a key made since");
+});
+
+test("identityStatus: a copy signed before the key, or with another key, needs re-signing (#22 review, 1)", async () => {
+  const { identityStatus } = await import("../src/identity.js");
+  const own = { bundleId: "com.claude-multiprofile.work.claude", appName: "Claude WORK" };
+  const onDisk = { bundleId: own.bundleId, name: own.appName };
+  assert.equal(identityStatus({ wanted: own, actual: onDisk, signed: true, anchored: false }), "unanchored");
+  assert.equal(identityStatus({ wanted: own, actual: onDisk, signed: true, anchored: true }), "ok");
+  assert.equal(identityStatus({ wanted: own, actual: onDisk, signed: false, anchored: false }), "unsigned", "a broken signature first");
+  assert.equal(identityStatus({ wanted: own, actual: onDisk, signed: null }), "ok", "not checked: not reported");
 });

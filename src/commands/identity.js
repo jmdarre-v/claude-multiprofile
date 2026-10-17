@@ -170,6 +170,11 @@ export async function identity(args) {
           it after Claude's product name). Your login password allows it;
           Deny makes it ask you to sign in.
 
+      It is signed with this Mac's own key ("claude-multiprofile local
+      signing" in your login keychain, created on first use). Each time it is
+      re-signed, once per Claude update, macOS asks for your login password:
+      choose Allow, never Always Allow, which would let any program use it.
+
       From then on, a permission change, a quit, or an AppleScript addressed
       to one of them reaches that one alone, and the menu bar says which is
       which. Sign-in methods that need Claude's keychain access groups

@@ -1,0 +1,142 @@
+// The key this Mac signs profile copies with, when they have their own app
+// identity (src/identity.js).
+//
+// TCC and the Keychain remember an app by its signature's designated
+// requirement. A requirement of the bundle ID alone is met by any code signed
+// with that identifier, ad hoc included, so any program running as the user
+// could `codesign -s - -i com.claude-multiprofile.<name>.claude` itself and
+// inherit the profile's permission grants and Keychain access (#22 review).
+// A requirement anchored to a certificate (`certificate leaf = H"..."`) is
+// met only by code signed with that certificate's private key.
+//
+// The key is self-signed and made once per Mac, in the login keychain:
+//
+//   - Untrusted, on purpose. codesign signs with an identity whether or not
+//     its certificate is trusted, and a requirement on the leaf hash does not
+//     care about trust either, so nothing here asks to change trust settings
+//     (which needs an administrator).
+//   - Not extractable (-x), and imported without pre-authorising any
+//     application (no -T). That is what makes it worth having: every use of
+//     the key asks for the login keychain password. Pre-authorising
+//     /usr/bin/codesign would let any process run codesign with the key
+//     silently, which is the identifier-only weakness over again. Measured
+//     2026-10-17: with -T the key signed silently from a plain shell; without
+//     it, codesign waited on the keychain prompt.
+//
+// The cost is that prompt once per Claude update, when the launcher re-signs
+// the copy: only the main bundle is signed with the key (TCC and the Keychain
+// identify the app by it), its helpers and frameworks ad hoc, so it is one
+// prompt, not one per bundle. "Always Allow" on it would add codesign to the
+// key's access list and undo the point; the README says not to.
+//
+// CMP_SIGNING_IDENTITY=- signs ad hoc with an identifier-only requirement.
+// For tests and CI, which have no key; never set by the tool itself.
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import crypto from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { HOME } from "./util.js";
+
+export const SIGNING_NAME = "claude-multiprofile local signing";
+const SECURITY = "/usr/bin/security";
+const OPENSSL = "/usr/bin/openssl";
+const LOGIN_KEYCHAIN = path.join(HOME, "Library", "Keychains", "login.keychain-db");
+
+// ---- Shared with the JXA (src/identity.js inlines these) -----------------------
+// ES5, no closures over module state: their source is pasted into JXA.
+
+// The SHA-1 of our signing identity in `security find-identity -p
+// codesigning` output, or null. Not -v: a self-signed certificate is never
+// "valid", and codesign signs with it anyway.
+export function parseSigningIdentity(out) {
+  var lines = String(out).split(/\r?\n/);
+  for (var i = 0; i < lines.length; i++) {
+    var m = lines[i].match(/^\s*\d+\)\s+([0-9A-Fa-f]{40})\s+"([^"]*)"/);
+    if (m && m[2] === "claude-multiprofile local signing") return m[1].toUpperCase();
+  }
+  return null;
+}
+
+// The designated requirement a copy is signed with. "-" (ad hoc, tests only)
+// has no certificate to anchor to.
+export function designatedRequirement(bundleId, leaf) {
+  var id = 'identifier "' + bundleId + '"';
+  return leaf === "-" ? id : id + ' and certificate leaf = H"' + String(leaf).toLowerCase() + '"';
+}
+
+// Whether `codesign -d -r-` output shows a requirement anchored to this key.
+export function requirementAnchored(text, leaf) {
+  if (leaf === "-") return true;
+  return String(text).toLowerCase().indexOf('certificate leaf = h"' + String(leaf).toLowerCase() + '"') >= 0;
+}
+
+// ---- Node side -------------------------------------------------------------------
+
+// The signer to use: the test override, or this Mac's key, or null.
+export function findSigningIdentity() {
+  if (process.env.CMP_SIGNING_IDENTITY) return process.env.CMP_SIGNING_IDENTITY;
+  try {
+    return parseSigningIdentity(
+      execFileSync(SECURITY, ["find-identity", "-p", "codesigning"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })
+    );
+  } catch {
+    return null;
+  }
+}
+
+// Make the key if this Mac has none. Returns { hash, created }.
+export function ensureSigningIdentity() {
+  const found = findSigningIdentity();
+  if (found) return { hash: found, created: false };
+
+  // The private key exists on disk only inside a 0700 temporary folder, for
+  // the second it takes to import it, and is removed whatever happens.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-signing-"));
+  try {
+    const cnf = path.join(tmp, "req.cnf");
+    const key = path.join(tmp, "key.pem");
+    const cert = path.join(tmp, "cert.pem");
+    const p12 = path.join(tmp, "id.p12");
+    const pass = crypto.randomBytes(24).toString("hex");
+    fs.writeFileSync(
+      cnf,
+      [
+        "[req]",
+        "distinguished_name=dn",
+        "x509_extensions=ext",
+        "prompt=no",
+        "[dn]",
+        `CN=${SIGNING_NAME}`,
+        "[ext]",
+        "basicConstraints=critical,CA:false",
+        "keyUsage=critical,digitalSignature",
+        "extendedKeyUsage=critical,codeSigning",
+        "",
+      ].join("\n"),
+      { mode: 0o600 }
+    );
+    // 20 years: the requirement is on this certificate's hash, so replacing
+    // it means every profile re-signs and asks for its permissions again.
+    execFileSync(OPENSSL, ["req", "-x509", "-newkey", "rsa:3072", "-nodes", "-keyout", key, "-out", cert, "-days", "7300", "-config", cnf], { stdio: "pipe" });
+    execFileSync(OPENSSL, ["pkcs12", "-export", "-inkey", key, "-in", cert, "-out", p12, "-passout", `pass:${pass}`], { stdio: "pipe" });
+    // -x: not extractable. No -T, no -A: no application may use it unasked.
+    execFileSync(SECURITY, ["import", p12, "-k", LOGIN_KEYCHAIN, "-f", "pkcs12", "-P", pass, "-x"], { stdio: "pipe" });
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  const hash = findSigningIdentity();
+  if (!hash) throw new Error(`created "${SIGNING_NAME}" but codesign cannot find it in the login keychain`);
+  return { hash, created: true };
+}
+
+// Whether a copy on disk is signed with a requirement anchored to `leaf`.
+export function copyAnchoredTo(appPath, leaf) {
+  try {
+    const text = execFileSync("/usr/bin/codesign", ["-d", "-r-", appPath], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    return requirementAnchored(text, leaf);
+  } catch {
+    return false;
+  }
+}
