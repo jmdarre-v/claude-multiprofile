@@ -294,7 +294,7 @@ export async function add() {
           appPath: desktopResult.appPath,
           claudeAppPath: desktopResult.claudeAppPath,
           color: desktopResult.color || null,
-          ...(desktopResult.identity ? { identity: desktopResult.identity } : {}),
+          ...(desktopResult.identity ? { identity: desktopResult.identity, bundleId: desktopResult.bundleId } : {}),
         }
       : null,
     code: codeResult
@@ -535,7 +535,7 @@ async function linkExisting(profile, missing) {
       appPath: desktopResult.appPath,
       claudeAppPath: desktopResult.claudeAppPath,
       color: desktopResult.color || null,
-      ...(desktopResult.identity ? { identity: desktopResult.identity } : {}),
+      ...(desktopResult.identity ? { identity: desktopResult.identity, bundleId: desktopResult.bundleId } : {}),
     };
   } else if (next.code && profile.desktop) {
     // Existing launcher, newly linked Code target: the launcher must be

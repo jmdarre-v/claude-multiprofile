@@ -16,7 +16,7 @@ import { getRegistry, registryLocation, registryHealth } from "../registry.js";
 import { detectDefaults } from "../detect.js";
 import { resolveClaude } from "../claudebin.js";
 import { header, info, warn, pathStr, tildify, command, dim, printLaunchHints } from "../util.js";
-import { wantsOwnIdentity, ownBundleIdFor } from "../identity.js";
+import { wantsOwnIdentity, ownIdentityFor } from "../identity.js";
 
 export async function list() {
   header("Claude installs and profiles");
@@ -84,7 +84,7 @@ export async function list() {
       console.log(`    Desktop data:    ${tildify(p.desktop.dataDir)}`);
       console.log(`    Desktop launcher: ${tildify(p.desktop.appPath)}`);
       if (wantsOwnIdentity(p.desktop)) {
-        console.log(`    Own identity:    ${ownBundleIdFor(p.name)}`);
+        console.log(`    Own identity:    ${ownIdentityFor(p.name, p.desktop).bundleId}`);
       }
     }
     if (p.code) {

@@ -784,7 +784,7 @@ export function clonesToVersionCheck(profiles, exists = fileExists) {
 // Claude's. Every rebuild of a copy goes through here, so a profile that
 // opted in never comes back with the shared identity.
 function identityFor(p) {
-  return wantsOwnIdentity(p.desktop) ? ownIdentityFor(p.name, p.desktop.appPath) : null;
+  return wantsOwnIdentity(p.desktop) ? ownIdentityFor(p.name, p.desktop) : null;
 }
 
 function checkAppClones(t, reg, fix) {

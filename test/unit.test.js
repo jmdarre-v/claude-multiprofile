@@ -2320,7 +2320,7 @@ test("identity: bundle IDs, kinds and what a profile wants", async () => {
   assert.equal(wantsOwnIdentity({}), false);
   assert.equal(wantsOwnIdentity(null), false);
   // The app name is the launcher's, which is the name the user knows.
-  assert.deepEqual(ownIdentityFor("work", "/Users/x/Applications/Claude WORK.app"), {
+  assert.deepEqual(ownIdentityFor("work", { appPath: "/Users/x/Applications/Claude WORK.app" }), {
     bundleId: "com.claude-multiprofile.work.claude",
     appName: "Claude WORK",
   });
@@ -2565,4 +2565,35 @@ test("launch helper: adopting an identity is staged, logged first, and waits a c
   assert.match(log, /giving the copy its own identity \(com\.claude-multiprofile\.w\.claude\)[\s\S]*could not give the copy its own identity/, "logged before and after");
   assert.equal(fs.readFileSync(path.join(clone, "Contents", "Info.plist"), "utf8"), plist, "Info.plist untouched");
   assert.deepEqual(fs.readdirSync(root).sort(), ["Claude w.app", "Source.app", "launch.js", "launch.log"], "nothing left beside the copy");
+});
+
+test("own identity: the bundle ID is recorded once, so a rename keeps permissions (#22 review, 5)", async () => {
+  const { ownIdentityFor, withOwnIdentity } = await import("../src/identity.js");
+  const desktop = { dataDir: "/d", appPath: "/Users/x/Applications/Claude Work.app" };
+  const recorded = withOwnIdentity("work", desktop);
+  assert.equal(recorded.identity, "own");
+  assert.equal(recorded.bundleId, "com.claude-multiprofile.work.claude");
+  // Opting in again (or repairing) never replaces what was recorded.
+  assert.equal(withOwnIdentity("client", recorded).bundleId, "com.claude-multiprofile.work.claude");
+  // After `rename work client`: the bundle ID stays, the app name follows the launcher.
+  const renamed = { ...recorded, appPath: "/Users/x/Applications/Claude Client.app" };
+  assert.deepEqual(ownIdentityFor("client", renamed), { bundleId: "com.claude-multiprofile.work.claude", appName: "Claude Client" });
+  // A profile that opted in before the ID was recorded still gets one from its name.
+  assert.deepEqual(ownIdentityFor("work", { ...desktop, identity: "own" }), { bundleId: "com.claude-multiprofile.work.claude", appName: "Claude Work" });
+});
+
+test("rename: a profile with its own identity keeps its bundle ID, recorded or not (#22 review, 5)", async () => {
+  const { planRenamePaths } = await import("../src/commands/rename.js");
+  const { defaultDataDirFor, defaultAppPathFor } = await import("../src/desktop.js");
+  const profile = (extra) => ({
+    name: "work",
+    type: "desktop",
+    desktop: { dataDir: defaultDataDirFor("work"), appPath: defaultAppPathFor("work"), claudeAppPath: "/Applications/Claude.app", identity: "own", ...extra },
+  });
+  // Opted in before the ID was recorded: the one it has been using is recorded now.
+  assert.equal(planRenamePaths(profile({}), "work", "client").newDesktop.bundleId, "com.claude-multiprofile.work.claude");
+  assert.equal(planRenamePaths(profile({ bundleId: "com.claude-multiprofile.old.claude" }), "work", "client").newDesktop.bundleId, "com.claude-multiprofile.old.claude");
+  // A shared profile gets nothing new.
+  const shared = planRenamePaths({ ...profile({}), desktop: { ...profile({}).desktop, identity: undefined } }, "work", "client").newDesktop;
+  assert.equal(shared.bundleId, undefined);
 });

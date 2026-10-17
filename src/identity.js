@@ -87,11 +87,20 @@ export function wantsOwnIdentity(desktop) {
   return Boolean(desktop) && desktop.identity === "own";
 }
 
-// The identity a profile's copy carries when it has its own: the bundle ID
-// from the profile name, the app name from the launcher, which is the name
-// the user already knows the profile by.
-export function ownIdentityFor(name, appPath) {
-  return { bundleId: ownBundleIdFor(name), appName: path.basename(appPath, ".app") };
+// A profile's Desktop entry with its own identity recorded. The bundle ID is
+// fixed when the profile opts in and never derived again: TCC grants and the
+// Keychain follow it, so a rename must not change it. Keeps one already
+// recorded.
+export function withOwnIdentity(name, desktop) {
+  return { ...desktop, identity: "own", bundleId: desktop.bundleId || ownBundleIdFor(name) };
+}
+
+// The identity a profile's copy carries when it has its own: the recorded
+// bundle ID (from the name, for a profile that opted in before it was
+// recorded), and the app name from the launcher, which is the name the user
+// already knows the profile by.
+export function ownIdentityFor(name, desktop) {
+  return { bundleId: desktop.bundleId || ownBundleIdFor(name), appName: path.basename(desktop.appPath, ".app") };
 }
 
 // "shared" is Claude's own identity, "own" one of ours, "foreign" anything

@@ -627,7 +627,7 @@ export function launchTargetFor(name, desktop) {
       dedicatedBundle: true,
       sourceAppPath: desktop.claudeAppPath,
       color: desktop.color || null,
-      identity: wantsOwnIdentity(desktop) ? ownIdentityFor(name, desktop.appPath) : null,
+      identity: wantsOwnIdentity(desktop) ? ownIdentityFor(name, desktop) : null,
     };
   }
   return { claudeAppPath: desktop.claudeAppPath, dedicatedBundle: false };
@@ -829,7 +829,7 @@ export function setupDesktop({
   // because the blocks stay shared with the original.
   let launchTarget = claudeAppPath;
   let clonePath = null;
-  const ownIdentity = identity === "own" ? ownIdentityFor(name, appPath) : null;
+  const ownIdentity = identity === "own" ? ownIdentityFor(name, { appPath }) : null;
   try {
     clonePath = ensureColoredClone({ name, claudeAppPath, color: color || null, identity: ownIdentity });
     launchTarget = clonePath;
@@ -889,5 +889,13 @@ export function setupDesktop({
     }
   }
 
-  return { dataDir, appPath, claudeAppPath, color: color || null, clonePath, identity: clonePath && ownIdentity ? "own" : null };
+  return {
+    dataDir,
+    appPath,
+    claudeAppPath,
+    color: color || null,
+    clonePath,
+    identity: clonePath && ownIdentity ? "own" : null,
+    bundleId: clonePath && ownIdentity ? ownIdentity.bundleId : null,
+  };
 }

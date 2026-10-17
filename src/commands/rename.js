@@ -49,7 +49,7 @@ import {
   dataDirInUse,
 } from "../desktop.js";
 import { clonePathFor, cloneIsRunning, ensureColoredClone } from "../appclone.js";
-import { wantsOwnIdentity, ownIdentityFor } from "../identity.js";
+import { wantsOwnIdentity, ownIdentityFor, withOwnIdentity } from "../identity.js";
 import { moveUpdateBlock } from "../updates.js";
 import { RESERVED_NAMES, withoutClaudePrefix } from "./add.js";
 import {
@@ -86,7 +86,14 @@ function moveDir(from, to) {
 export function planRenamePaths(profile, oldName, newName) {
   const plan = [];
   const newCode = profile.code ? { ...profile.code } : null;
-  const newDesktop = profile.desktop ? { ...profile.desktop } : null;
+  // A profile with its own identity keeps its bundle ID, which TCC grants and
+  // the Keychain follow; one that opted in before it was recorded records the
+  // one derived from its old name.
+  const newDesktop = profile.desktop
+    ? wantsOwnIdentity(profile.desktop)
+      ? withOwnIdentity(oldName, profile.desktop)
+      : { ...profile.desktop }
+    : null;
 
   if (profile.code) {
     const defaultOld = defaultConfigDirFor(oldName);
@@ -325,17 +332,24 @@ export async function rename(args = []) {
       }
     }
 
-    // A copy with its own identity carries the old name in its bundle ID and
-    // app name (src/identity.js); both follow the profile and launcher names.
+    // A copy with its own identity keeps its bundle ID, so its permissions
+    // stay. Its app name follows the launcher, and Electron names the copy's
+    // Keychain entry after it ("<name> Safe Storage"), so the renamed profile
+    // cannot read what it stored under the old name and signs in again.
     if (wantsOwnIdentity(profile.desktop) && fileExists(newClone)) {
       try {
+        const own = ownIdentityFor(newName, newDesktop);
+        const before = ownIdentityFor(oldName, { ...newDesktop, appPath: profile.desktop.appPath });
         ensureColoredClone({
           name: newName,
           claudeAppPath: profile.desktop.claudeAppPath,
           color: profile.desktop.color || null,
-          identity: ownIdentityFor(newName, newDesktop.appPath),
+          identity: own,
         });
-        ok("Its copy's identity now matches the new name.");
+        ok("Its copy's name now matches the new launcher; its bundle ID and permissions are unchanged.");
+        if (own.appName !== before.appName) {
+          warn(`${own.appName} will ask you to sign in again: its Keychain entry is named after the app.`);
+        }
       } catch (e) {
         warn(`Could not update its copy's identity: ${e.message}`);
         info(`Run ${command("claude-multiprofile doctor --fix")} to apply it.`);
