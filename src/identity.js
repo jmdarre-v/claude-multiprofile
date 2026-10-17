@@ -78,7 +78,13 @@
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { runJxa } from "./jxa.js";
-import { ensureSigningIdentity, parseSigningIdentity, designatedRequirement, requirementAnchored } from "./signing.js";
+import {
+  ensureSigningIdentity,
+  explainSigningError,
+  parseSigningIdentity,
+  designatedRequirement,
+  requirementAnchored,
+} from "./signing.js";
 import { fileExists } from "./util.js";
 
 const PLIST_BUDDY = "/usr/libexec/PlistBuddy";
@@ -419,7 +425,12 @@ function run(argv) { return applyIdentityStaged(argv[0], argv[1], argv[2], argv[
 export function applyOwnIdentity(appPath, { bundleId, appName }) {
   // Made on first use; signing asks for the login keychain password.
   const { hash: signer } = ensureSigningIdentity();
-  const out = runJxa(IDENTITY_JXA + IDENTITY_RUNNER, [appPath, bundleId, appName, signer], { timeout: 300_000 });
+  let out;
+  try {
+    out = runJxa(IDENTITY_JXA + IDENTITY_RUNNER, [appPath, bundleId, appName, signer], { timeout: 300_000 });
+  } catch (e) {
+    throw new Error(explainSigningError(String(e.stderr || e.message).trim()));
+  }
   if (out !== "applied" && out !== "already") throw new Error(out || "no result from the identity script");
   if (out === "applied" && fileExists(LSREGISTER)) {
     try {

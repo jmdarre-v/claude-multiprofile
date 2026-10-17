@@ -2663,3 +2663,10 @@ test("identityStatus: a copy signed before the key, or with another key, needs r
   assert.equal(identityStatus({ wanted: own, actual: onDisk, signed: false, anchored: false }), "unsigned", "a broken signature first");
   assert.equal(identityStatus({ wanted: own, actual: onDisk, signed: null }), "ok", "not checked: not reported");
 });
+
+test("signing: a declined key prompt is explained, anything else passes through (#22 review, 1)", async () => {
+  const { explainSigningError } = await import("../src/signing.js");
+  const declined = explainSigningError("/x/Claude W.app.refreshing: errSecInternalComponent");
+  assert.match(declined, /choose Allow \(not Always Allow\)/);
+  assert.equal(explainSigningError("no Info.plist in /x"), "no Info.plist in /x");
+});

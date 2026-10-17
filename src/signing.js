@@ -36,8 +36,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
-import { execFileSync } from "node:child_process";
-import { HOME } from "./util.js";
+import { execFileSync, spawnSync } from "node:child_process";
+import { HOME, info } from "./util.js";
 
 export const SIGNING_NAME = "claude-multiprofile local signing";
 const SECURITY = "/usr/bin/security";
@@ -120,15 +120,45 @@ export function ensureSigningIdentity() {
     // 20 years: the requirement is on this certificate's hash, so replacing
     // it means every profile re-signs and asks for its permissions again.
     execFileSync(OPENSSL, ["req", "-x509", "-newkey", "rsa:3072", "-nodes", "-keyout", key, "-out", cert, "-days", "7300", "-config", cnf], { stdio: "pipe" });
-    execFileSync(OPENSSL, ["pkcs12", "-export", "-inkey", key, "-in", cert, "-out", p12, "-passout", `pass:${pass}`], { stdio: "pipe" });
+    // -name labels the key, so set-key-partition-list below can pick it out
+    // of the keychain by a label no other key has.
+    execFileSync(OPENSSL, ["pkcs12", "-export", "-name", SIGNING_NAME, "-inkey", key, "-in", cert, "-out", p12, "-passout", `pass:${pass}`], { stdio: "pipe" });
     // -x: not extractable. No -T, no -A: no application may use it unasked.
-    execFileSync(SECURITY, ["import", p12, "-k", LOGIN_KEYCHAIN, "-f", "pkcs12", "-P", pass, "-x"], { stdio: "pipe" });
+    // No -f pkcs12 either: with it, security drops the label (measured).
+    execFileSync(SECURITY, ["import", p12, "-k", LOGIN_KEYCHAIN, "-P", pass, "-x"], { stdio: "pipe" });
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
+  }
+  // A key imported by `security` is in its partition only. codesign is in
+  // Apple's, and a key outside a caller's partition fails at once with
+  // errSecInternalComponent instead of asking (measured: the prompt appeared
+  // with nobody left waiting for it). Adding apple: lets codesign ASK; the
+  // access list still lets nothing use the key without the user's say-so.
+  // Changing the partition list needs the login keychain password, asked
+  // for here, in the terminal, once.
+  explainPartitionStep();
+  const r = spawnSync(SECURITY, ["set-key-partition-list", "-S", "apple-tool:,apple:", "-s", "-l", SIGNING_NAME, LOGIN_KEYCHAIN], {
+    stdio: ["inherit", "ignore", "inherit"],
+  });
+  if (r.status !== 0) {
+    throw new Error(
+      `the signing key was created, but codesign was not allowed to ask for it (wrong password?). Run claude-multiprofile doctor --fix to try again`
+    );
   }
   const hash = findSigningIdentity();
   if (!hash) throw new Error(`created "${SIGNING_NAME}" but codesign cannot find it in the login keychain`);
   return { hash, created: true };
+}
+
+function explainPartitionStep() {
+  info(`Created "${SIGNING_NAME}" in your login keychain.`);
+  info("To let codesign ask for it, macOS needs your login password once (typed here, not shown).");
+}
+
+// codesign's answer when the key's prompt was declined, or could not be shown.
+export function explainSigningError(message) {
+  if (!/errSecInternalComponent/.test(String(message))) return message;
+  return `${message}\n  macOS did not let codesign use the signing key: Deny was chosen, or the prompt could not be answered. Run it again and choose Allow (not Always Allow).`;
 }
 
 // Whether a copy on disk is signed with a requirement anchored to `leaf`.
