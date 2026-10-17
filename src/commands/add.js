@@ -762,11 +762,13 @@ async function askDesktopQuestions(name) {
     copy, and AppleScript or a quit by name picks one of them at random.
 
     Giving the profile its own identity makes its copy a separate app: its
-    own bundle ID and permissions, its own Keychain entry, and the launcher's
-    name in the menu bar and Dock. The copy is re-signed locally for that, so
-    it no longer carries Anthropic's signature, and sign-in methods that need
-    Claude's keychain access groups (passkeys, hardware keys, Microsoft Entra)
-    are unavailable in it. Email and Google sign-in are unaffected.
+    own bundle ID and permissions, and the launcher's name in the menu bar
+    and Dock. The copy is re-signed with a key made on this Mac for that, so
+    it no longer carries Anthropic's signature, macOS asks for your login
+    password each time it is re-signed (once per Claude update), and sign-in
+    methods that need Claude's keychain access groups (passkeys, hardware
+    keys, Microsoft Entra) are unavailable in it. Email and Google sign-in
+    are unaffected.
   `);
   const ownIdentity = await confirm({
     message: "Give this profile its own app identity? (a separate app to macOS)",

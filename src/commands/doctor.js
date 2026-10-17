@@ -71,6 +71,7 @@ import {
   runningCopies,
   cloneIsRunning,
 } from "../appclone.js";
+import { findSigningIdentity, copyAnchoredTo } from "../signing.js";
 import {
   wantsOwnIdentity,
   ownIdentityFor,
@@ -950,16 +951,25 @@ function checkIdentities(t, reg, fix) {
     const wanted = identityFor(p);
     const actual = readIdentity(clone);
     const signed = wanted && actual && actual.bundleId === wanted.bundleId ? signatureValid(clone) : null;
-    const state = identityStatus({ wanted, actual, signed });
+    // Signed with this Mac's key (src/signing.js)? A copy signed before the
+    // key existed has a requirement anyone can meet.
+    const signer = signed ? findSigningIdentity() : null;
+    const anchored = signed ? Boolean(signer) && copyAnchoredTo(clone, signer) : null;
+    const state = identityStatus({ wanted, actual, signed, anchored });
     const running = cloneIsRunning(clone);
 
-    if (state === "needs-own" || state === "needs-shared" || state === "unsigned") {
+    if (state === "needs-own" || state === "needs-shared" || state === "unsigned" || state === "unanchored") {
       if (state === "needs-own") {
         warn(`${p.name}: wants its own identity, but its copy still carries ${actual.bundleId}.`);
         info("  macOS sees that copy and your main Claude as one app: a permission");
         info('  change\'s "Quit & Reopen", or a quit addressed to "Claude", reaches both.');
       } else if (state === "needs-shared") {
         warn(`${p.name}: shares Claude's identity again, but its copy still carries ${actual.bundleId}.`);
+      } else if (state === "unanchored") {
+        warn(`${p.name}: its copy is not signed with this Mac's signing key.`);
+        info("  Its signature names only the bundle ID, which any program can sign itself");
+        info("  with, and so claim the permissions you granted this profile.");
+        if (fix && !signer) info("  The key is created now; macOS asks for your login password to sign with it.");
       } else {
         warn(`${p.name}: its copy has the right identity, but its signature does not verify.`);
         info("  macOS refuses to start an app whose signature is broken.");

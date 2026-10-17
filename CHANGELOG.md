@@ -26,11 +26,17 @@ project is pre-1.0, so minor breakage may occur between 0.x releases.
   grants. (Not its own Keychain entry: Electron names that after the
   product name built into Claude, so the copy still uses `Claude Safe
   Storage`, and macOS asks before it reads it.) The copy is
-  re-signed ad hoc for that, with the entitlements that need Apple's
+  re-signed on this Mac for that, with the entitlements that need Apple's
   provisioning profile dropped, the hardened runtime kept with library
   validation relaxed for Claude's Anthropic-signed native modules (`DYLD_*`
-  injection stays blocked), and its designated requirement set to the identifier alone so a copy rebuilt after
-  a Claude update is the same app to TCC and the Keychain. The launch helper
+  injection stays blocked). It is signed with a key made once per Mac
+  (`claude-multiprofile local signing`, self-signed, not extractable, in the
+  login keychain), and its designated requirement is the bundle ID and that
+  key's certificate: a copy rebuilt after a Claude update is the same app to
+  TCC and the Keychain, and no other program can claim to be it. The key
+  asks for the login password each time it signs, so once per Claude update;
+  it is created on first use and `doctor --fix` re-signs copies signed
+  without it. The launch helper
   (v3) applies the identity when it rebuilds a copy, and adopts a copy that
   lacks the identity its profile wants. The identity is always applied to a
   clone beside the copy and swapped in only once its signature verifies, so

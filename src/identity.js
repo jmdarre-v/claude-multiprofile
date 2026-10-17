@@ -38,7 +38,7 @@
 //     another program (see signing below).
 //   - Re-signed ad hoc. Changing Info.plist breaks Anthropic's signature, and
 //     an app with a broken signature does not start, so the copy is signed
-//     again locally. Three things go with the old signature:
+//     again on this Mac. Three things go with the old signature:
 //       * The entitlements that need Apple's provisioning profile
 //         (application-identifier, team-identifier, keychain-access-groups).
 //         Sign-in methods built on them (passkeys, hardware keys, Microsoft
@@ -56,10 +56,13 @@
 //       * Gatekeeper's blessing. It never looks: the copy is made locally and
 //         carries no quarantine flag (a flag inherited from /Applications is
 //         removed), and Gatekeeper only assesses quarantined apps.
-//     The designated requirement is set to the identifier alone. TCC and the
-//     Keychain remember an app by its designated requirement, so a copy
-//     rebuilt after a Claude update satisfies the same requirement and keeps
-//     its permissions and its Keychain access, instead of asking again.
+//     The main bundle is signed with this Mac's own key (src/signing.js),
+//     and its designated requirement is the identifier AND that key's
+//     certificate. TCC and the Keychain remember an app by its designated
+//     requirement, so a copy rebuilt after a Claude update meets the same
+//     requirement and keeps its permissions, while no other program can meet
+//     it without the key. Using the key asks for the login password, once
+//     per Claude update.
 //
 // Switching an existing profile over has two visible effects, both one-off:
 // macOS asks for its permissions again (it is a new app to it), and the
@@ -75,6 +78,7 @@
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { runJxa } from "./jxa.js";
+import { ensureSigningIdentity, parseSigningIdentity, designatedRequirement, requirementAnchored } from "./signing.js";
 import { fileExists } from "./util.js";
 
 const PLIST_BUDDY = "/usr/libexec/PlistBuddy";
@@ -156,11 +160,14 @@ export function signatureValid(appPath) {
 //   "needs-own"     the profile wants its own identity; the copy has another
 //   "needs-shared"  the profile wants Claude's identity; the copy has its own
 //   "unsigned"      the right identity, but the signature does not verify
-export function identityStatus({ wanted, actual, signed }) {
+//   "unanchored"    the right identity, but not signed with this Mac's key
+//                   (signed before the key existed, or with one made since)
+export function identityStatus({ wanted, actual, signed, anchored }) {
   if (!actual) return "missing";
   if (!wanted) return identityKind(actual.bundleId) === "own" ? "needs-shared" : "ok";
   if (actual.bundleId !== wanted.bundleId || actual.name !== wanted.appName) return "needs-own";
   if (signed === false) return "unsigned";
+  if (anchored === false) return "unanchored";
   return "ok";
 }
 
@@ -196,6 +203,29 @@ function idPlist(p) { return $.NSMutableDictionary.dictionaryWithContentsOfFile(
 function idStr(d, key) { var v = d.objectForKey(key); return v.isNil() ? null : String(v.js); }
 function idSet(d, key, value) { d.setObjectForKey($(value), key); }
 function idRemove(p) { if (idExists(p)) idFm.removeItemAtPathError(p, null); }
+function idEnv(name) {
+  var v = $.NSProcessInfo.processInfo.environment.objectForKey(name);
+  return v.isNil() ? '' : v.js;
+}
+
+// This Mac's signing key (src/signing.js), found the same way as from Node.
+${parseSigningIdentity.toString()}
+${designatedRequirement.toString()}
+${requirementAnchored.toString()}
+function idSigner() {
+  var forced = idEnv('CMP_SIGNING_IDENTITY');
+  if (forced) return forced;
+  var out = '';
+  try { out = idSh('/usr/bin/security find-identity -p codesigning'); } catch (e) {}
+  var hash = parseSigningIdentity(out);
+  if (!hash) throw new Error('no signing key on this Mac; run claude-multiprofile doctor --fix');
+  return hash;
+}
+function idAnchored(appPath, signer) {
+  var text = '';
+  try { text = idSh('/usr/bin/codesign -d -r- ' + idQ(appPath) + ' 2>/dev/null'); } catch (e) { return false; }
+  return requirementAnchored(text, signer);
+}
 
 // Remove an extended attribute by path, from this process. Not /usr/bin/xattr:
 // it opens every file, and endpoint security agents (Defender, BeyondTrust)
@@ -285,8 +315,10 @@ function dropMsalUrlTypes(d) {
 
 // Inner bundles first, all with the hardened runtime (see the module
 // comment). Helper apps keep their own entitlements, through
-// writeKeptEntitlements like the app itself.
-function signAdHoc(appPath, bundleId, entitlementsPath) {
+// writeKeptEntitlements like the app itself, and are signed ad hoc: TCC and
+// the Keychain identify the app by its main bundle, so only that is signed
+// with this Mac's key, and the key's password prompt comes once.
+function signCopy(appPath, bundleId, entitlementsPath, signer) {
   var fw = appPath + '/Contents/Frameworks';
   var nested = ObjC.deepUnwrap(idFm.contentsOfDirectoryAtPathError(fw, null)) || [];
   nested.forEach(function (n) {
@@ -303,19 +335,20 @@ function signAdHoc(appPath, bundleId, entitlementsPath) {
       }
     }
   });
-  idSh(ID_CODESIGN + ' --force --sign - --options runtime --entitlements ' + idQ(entitlementsPath) + ' ' +
-    "-r '=designated => identifier \\"" + bundleId + "\\"' " + idQ(appPath) + ' 2>&1');
+  idSh(ID_CODESIGN + ' --force --sign ' + idQ(signer) + ' --options runtime --entitlements ' + idQ(entitlementsPath) + ' ' +
+    '-r ' + idQ('=designated => ' + designatedRequirement(bundleId, signer)) + ' ' + idQ(appPath) + ' 2>&1');
   idSh(ID_CODESIGN + ' --verify ' + idQ(appPath) + ' 2>&1');
 }
 
 // Give a copy of Claude.app its own identity. Returns 'already' when it has
-// exactly this one, 'applied' otherwise. The colour (Finder metadata on the
+// exactly this one, signed with this Mac's key, 'applied' otherwise. The colour (Finder metadata on the
 // bundle) is removed on the way, because the signature would seal it in as
 // detritus; callers put it back afterwards.
-function applyIdentity(appPath, bundleId, appName) {
+function applyIdentity(appPath, bundleId, appName, signer) {
+  signer = signer || idSigner();
   var current = identityOf(appPath);
   if (!current) throw new Error('no Info.plist in ' + appPath);
-  if (current.bundleId === bundleId && current.name === appName) return 'already';
+  if (current.bundleId === bundleId && current.name === appName && idAnchored(appPath, signer)) return 'already';
   var contents = appPath + '/Contents';
   idRemove(appPath + '/Icon\\r');
   idRemoveXattr(appPath, 'com.apple.FinderInfo');
@@ -334,7 +367,7 @@ function applyIdentity(appPath, bundleId, appName) {
     dropMsalUrlTypes(d);
     if (!d.writeToFileAtomically(contents + '/Info.plist', true)) throw new Error('could not write Info.plist');
     idRemove(contents + '/embedded.provisionprofile');
-    signAdHoc(appPath, bundleId, entitlements);
+    signCopy(appPath, bundleId, entitlements, signer);
   } finally {
     idRemove(entitlements);
   }
@@ -352,16 +385,17 @@ function idDiscard(p) {
 // applyIdentity renames the helpers and rewrites Info.plist before it signs,
 // and a copy cut off in between does not start. Same scheme and leftover
 // names as the launch helper's refresh, which cleans up after a cut-off run.
-function applyIdentityStaged(appPath, bundleId, appName) {
+function applyIdentityStaged(appPath, bundleId, appName, signer) {
+  signer = signer || idSigner();
   var current = identityOf(appPath);
   if (!current) throw new Error('no Info.plist in ' + appPath);
-  if (current.bundleId === bundleId && current.name === appName) return 'already';
+  if (current.bundleId === bundleId && current.name === appName && idAnchored(appPath, signer)) return 'already';
   var tmp = appPath + '.refreshing', old = appPath + '.previous';
   try {
     idDiscard(tmp);
     try { idSh('/bin/cp -Rc ' + idQ(appPath) + ' ' + idQ(tmp)); }
     catch (e) { idSh('/bin/cp -R ' + idQ(appPath) + ' ' + idQ(tmp)); }
-    applyIdentity(tmp, bundleId, appName);
+    applyIdentity(tmp, bundleId, appName, signer);
     idDiscard(old);
     idSh('/bin/mv ' + idQ(appPath) + ' ' + idQ(old));
     try { idSh('/bin/mv ' + idQ(tmp) + ' ' + idQ(appPath)); }
@@ -376,14 +410,16 @@ function applyIdentityStaged(appPath, bundleId, appName) {
 `;
 
 const IDENTITY_RUNNER = `
-function run(argv) { return applyIdentityStaged(argv[0], argv[1], argv[2]); }
+function run(argv) { return applyIdentityStaged(argv[0], argv[1], argv[2], argv[3]); }
 `;
 
 // Apply an identity to a copy on disk. Returns "applied" or "already".
 // Signing hashes the whole app, so give it time. Staged: on failure the copy
 // is left as it was.
 export function applyOwnIdentity(appPath, { bundleId, appName }) {
-  const out = runJxa(IDENTITY_JXA + IDENTITY_RUNNER, [appPath, bundleId, appName], { timeout: 300_000 });
+  // Made on first use; signing asks for the login keychain password.
+  const { hash: signer } = ensureSigningIdentity();
+  const out = runJxa(IDENTITY_JXA + IDENTITY_RUNNER, [appPath, bundleId, appName, signer], { timeout: 300_000 });
   if (out !== "applied" && out !== "already") throw new Error(out || "no result from the identity script");
   if (out === "applied" && fileExists(LSREGISTER)) {
     try {
