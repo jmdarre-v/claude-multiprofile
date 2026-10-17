@@ -10,6 +10,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync as execFileSyncForTests } from "node:child_process";
+
+// Real signing in tests is ad hoc: CI has no signing key (src/signing.js).
+const ADHOC = { signer: "-" };
 
 // Some tests deliberately drive refusal paths (a corrupt settings.json, a
 // symlink pointing out of the profile), and those paths warn on purpose:
@@ -2299,4 +2303,373 @@ test("withoutClaudePrefix: a name that would double the Claude the tool adds (#2
   assert.equal(withoutClaudePrefix("claude"), null, "nothing left to keep");
   assert.equal(withoutClaudePrefix("claudette"), null, "only the word itself");
   assert.equal(withoutClaudePrefix("work"), null);
+});
+
+
+// ---------------------------------------------------------------------------
+// identity.js - a profile's own app identity
+// ---------------------------------------------------------------------------
+
+test("identity: bundle IDs, kinds and what a profile wants", async () => {
+  const { ownBundleIdFor, identityKind, wantsOwnIdentity, ownIdentityFor } = await import("../src/identity.js");
+  assert.equal(ownBundleIdFor("Work"), "com.claude-multiprofile.work.claude");
+  assert.equal(ownBundleIdFor("my client!"), "com.claude-multiprofile.my-client.claude");
+  // The launcher's own ID (no suffix) is never mistaken for a copy's.
+  assert.equal(identityKind("com.claude-multiprofile.work"), "foreign");
+  assert.equal(identityKind("com.claude-multiprofile.work.claude"), "own");
+  assert.equal(identityKind("com.anthropic.claudefordesktop"), "shared");
+  assert.equal(identityKind(null), "unknown");
+  assert.equal(wantsOwnIdentity({ identity: "own" }), true);
+  assert.equal(wantsOwnIdentity({}), false);
+  assert.equal(wantsOwnIdentity(null), false);
+  // The app name is the launcher's, which is the name the user knows.
+  assert.deepEqual(ownIdentityFor("work", { appPath: "/Users/x/Applications/Claude WORK.app" }), {
+    bundleId: "com.claude-multiprofile.work.claude",
+    appName: "Claude WORK",
+  });
+});
+
+test("identityStatus: what doctor says about a copy, for every combination", async () => {
+  const { identityStatus } = await import("../src/identity.js");
+  const own = { bundleId: "com.claude-multiprofile.work.claude", appName: "Claude WORK" };
+  const shared = { bundleId: "com.anthropic.claudefordesktop", name: "Claude" };
+  const onDisk = { bundleId: own.bundleId, name: own.appName };
+  assert.equal(identityStatus({ wanted: null, actual: null }), "missing");
+  assert.equal(identityStatus({ wanted: null, actual: shared }), "ok");
+  assert.equal(identityStatus({ wanted: null, actual: onDisk }), "needs-shared");
+  assert.equal(identityStatus({ wanted: own, actual: shared }), "needs-own");
+  // Right ID, wrong name (a renamed profile): still needs applying.
+  assert.equal(identityStatus({ wanted: own, actual: { ...onDisk, name: "Claude OLD" } }), "needs-own");
+  assert.equal(identityStatus({ wanted: own, actual: onDisk, signed: true }), "ok");
+  assert.equal(identityStatus({ wanted: own, actual: onDisk, signed: null }), "ok");
+  assert.equal(identityStatus({ wanted: own, actual: onDisk, signed: false }), "unsigned");
+});
+
+test("buildLaunchAppleScript: a profile with its own identity tells the helper, and doctor reads it back", async (t) => {
+  const { buildLaunchAppleScript, launcherIdentity, launcherCodeConfigDir } = await import("../src/desktop.js");
+  const base = {
+    path: "/Users/x/Library/Application Support/claude-multiprofile/bin/launch.js",
+    source: "/Applications/Claude.app",
+    hue: "",
+    label: "Claude WORK",
+  };
+  const clone = "/Users/x/Library/Application Support/claude-multiprofile/apps/Claude work.app";
+  const without = buildLaunchAppleScript("/Users/x/Claude-WORK", clone, "/c", null, true, base);
+  assert.ok(!without.includes("CMP_LAUNCH_IDENTITY"), "no identity, no variable");
+  const withId = buildLaunchAppleScript("/Users/x/Claude-WORK", clone, "/c", null, true, {
+    ...base,
+    identity: "com.claude-multiprofile.work.claude",
+  });
+  assert.ok(
+    withId.includes("CMP_LAUNCH_IDENTITY='com.claude-multiprofile.work.claude' /usr/bin/osascript"),
+    "the identity rides in the environment, right before the helper call"
+  );
+  // The fallback line (no helper on disk) never carries it: plain `open`
+  // cannot apply an identity, and must stay exactly what it was.
+  const legacy = buildLaunchAppleScript("/Users/x/Claude-WORK", clone, "/c", null, true);
+  const legacyLine = legacy.slice('do shell script "'.length, -1);
+  assert.ok(withId.includes(`else ${legacyLine} fi`));
+
+  if (process.platform !== "darwin") {
+    t.skip("osacompile is macOS only");
+    return;
+  }
+  const { execFileSync } = await import("node:child_process");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-identity-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  for (const [label, script, expected] of [
+    ["with", withId, "com.claude-multiprofile.work.claude"],
+    ["without", without, null],
+  ]) {
+    const src = path.join(root, `${label}.applescript`);
+    const app = path.join(root, `${label}.app`);
+    fs.writeFileSync(src, script);
+    execFileSync("/usr/bin/osacompile", ["-o", app, src], { stdio: "pipe" });
+    assert.equal(launcherIdentity(app), expected, `read back (${label})`);
+    assert.equal(launcherCodeConfigDir(app), "/c", `the other env vars still read back (${label})`);
+  }
+  assert.equal(launcherIdentity(path.join(root, "nowhere.app")), undefined);
+});
+
+test("launch helper: accepts a copy with its own identity, and adopts one that lacks it", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("osascript is macOS only");
+    return;
+  }
+  const { HELPER_JS } = await import("../src/launchhelper.js");
+  const { execFileSync } = await import("node:child_process");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-helper-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const helper = path.join(root, "launch.js");
+  fs.writeFileSync(helper, HELPER_JS);
+
+  const fakeApp = (name, bundleId) => {
+    const dir = path.join(root, name, "Contents");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "Info.plist"),
+      `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>${bundleId}</string><key>CFBundleShortVersionString</key><string>2.10.0</string></dict></plist>`
+    );
+    return path.join(root, name);
+  };
+  const source = fakeApp("Source.app", "com.anthropic.claudefordesktop");
+  const decide = (clone, identity) =>
+    execFileSync(
+      "/usr/bin/osascript",
+      ["-l", "JavaScript", helper, clone, source, "", path.join(root, "data"), "Claude T", "-a", clone],
+      {
+        encoding: "utf8",
+        env: { ...process.env, CMP_LAUNCH_DRY_RUN: "1", ...(identity ? { CMP_LAUNCH_IDENTITY: identity } : {}) },
+      }
+    ).trim();
+
+  const own = "com.claude-multiprofile.t.claude";
+  // Its own identity is ours: opened, not refused as "not Claude". This one
+  // is not signed with this Mac's key, so it is re-signed first (#22 review, 1):
+  // a copy signed by an earlier version has a requirement anyone can meet.
+  assert.equal(decide(fakeApp("Own.app", own), own), `not running: current; would-adopt ${own}`);
+  // Same copy, launcher no longer passing an identity: still opened. Going
+  // back to Claude's identity is the tool's job (a fresh copy), not the helper's.
+  assert.equal(decide(fakeApp("Own2.app", own)), "not running: current");
+  // A shared copy whose profile now wants its own identity: adopted before opening.
+  assert.equal(decide(fakeApp("Shared.app", "com.anthropic.claudefordesktop"), own), `not running: current; would-adopt ${own}`);
+  // A launcher is still never opened, identity or not.
+  assert.equal(decide(fakeApp("Applet.app", "com.claude-multiprofile.t"), own), "refused: not Claude");
+});
+
+test("applyOwnIdentity: re-identifies and re-signs a real app bundle, helpers included", async (t) => {
+  if (process.platform !== "darwin" || !fs.existsSync("/System/Applications/Calculator.app")) {
+    t.skip("needs macOS and a stock app to copy");
+    return;
+  }
+  const { applyOwnIdentity, readIdentity, signatureValid } = await import("../src/identity.js");
+  const { execFileSync } = await import("node:child_process");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-identity-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const app = path.join(root, "Calc.app");
+  execFileSync("/bin/cp", ["-R", "/System/Applications/Calculator.app", app]);
+  // A stand-in for an Electron helper app, named after the main bundle the
+  // way Electron names them, with a real executable so it can be signed.
+  const helper = path.join(app, "Contents", "Frameworks", "Calculator Helper (GPU).app");
+  fs.mkdirSync(path.join(helper, "Contents", "MacOS"), { recursive: true });
+  fs.copyFileSync(path.join(app, "Contents", "MacOS", "Calculator"), path.join(helper, "Contents", "MacOS", "Calculator Helper (GPU)"));
+  fs.writeFileSync(
+    path.join(helper, "Contents", "Info.plist"),
+    `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.apple.calculator.helper</string><key>CFBundleExecutable</key><string>Calculator Helper (GPU)</string><key>CFBundleName</key><string>Calculator Helper (GPU)</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>`
+  );
+  const identity = { bundleId: "com.claude-multiprofile.t.claude", appName: "Calc T" };
+
+  assert.equal(quietly(() => applyOwnIdentity(app, identity, ADHOC)), "applied");
+  assert.deepEqual(readIdentity(app), { bundleId: identity.bundleId, name: identity.appName });
+  assert.ok(fs.existsSync(path.join(app, "Contents", "Frameworks", "Calc T Helper (GPU).app", "Contents", "MacOS", "Calc T Helper (GPU)")), "helper renamed, executable too");
+  assert.ok(!fs.existsSync(helper), "old helper name gone");
+  assert.equal(readIdentity(path.join(app, "Contents", "Frameworks", "Calc T Helper (GPU).app")).bundleId, "com.claude-multiprofile.t.claude.helper");
+  assert.equal(signatureValid(app), true, "the re-signed app verifies");
+  const requirement = execFileSync("/usr/bin/codesign", ["-d", "-r-", app], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  assert.ok(requirement.includes(`designated => identifier "${identity.bundleId}"`), `identifier-only designated requirement, got: ${requirement}`);
+  const entitlements = execFileSync("/usr/bin/codesign", ["-d", "--entitlements", "-", "--xml", app], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  assert.ok(!entitlements.includes("com.apple.application-identifier"), "restricted entitlements dropped");
+  assert.ok(!entitlements.includes("com.apple.private."), "Apple-private entitlements dropped");
+  assert.ok(!fs.existsSync(path.join(app, "Contents", "embedded.provisionprofile")));
+  // Idempotent: the same identity again is a no-op, not a second re-sign.
+  assert.equal(quietly(() => applyOwnIdentity(app, identity, ADHOC)), "already");
+});
+
+// A copy of Calculator.app with a stand-in Electron helper, named after the
+// main bundle the way Electron names them. Returns null off macOS.
+function fakeElectronApp(root) {
+  if (process.platform !== "darwin" || !fs.existsSync("/System/Applications/Calculator.app")) return null;
+  const app = path.join(root, "Calc.app");
+  execFileSyncForTests("/bin/cp", ["-R", "/System/Applications/Calculator.app", app]);
+  const helper = path.join(app, "Contents", "Frameworks", "Calculator Helper (GPU).app");
+  fs.mkdirSync(path.join(helper, "Contents", "MacOS"), { recursive: true });
+  fs.copyFileSync(path.join(app, "Contents", "MacOS", "Calculator"), path.join(helper, "Contents", "MacOS", "Calculator Helper (GPU)"));
+  fs.writeFileSync(
+    path.join(helper, "Contents", "Info.plist"),
+    `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.apple.calculator.helper</string><key>CFBundleExecutable</key><string>Calculator Helper (GPU)</string><key>CFBundleName</key><string>Calculator Helper (GPU)</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>`
+  );
+  return { app, helper };
+}
+
+test("applyOwnIdentity: a failure part-way leaves the copy exactly as it was (#22 review, 3)", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-identity-fail-"));
+  t.after(() => {
+    execFileSyncForTests("/bin/chmod", ["-R", "u+w", root]);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const fake = fakeElectronApp(root);
+  if (!fake) {
+    t.skip("needs macOS and a stock app to copy");
+    return;
+  }
+  const { applyOwnIdentity, readIdentity, signatureValid } = await import("../src/identity.js");
+  const before = readIdentity(fake.app);
+  const signedBefore = signatureValid(fake.app);
+  // The helper's folder renames fine, but its Info.plist cannot be rewritten:
+  // the work fails after the first change to the bundle.
+  fs.chmodSync(path.join(fake.helper, "Contents"), 0o555);
+
+  assert.throws(() => quietly(() => applyOwnIdentity(fake.app, { bundleId: "com.claude-multiprofile.t.claude", appName: "Calc T" }, ADHOC)));
+  assert.deepEqual(readIdentity(fake.app), before, "Info.plist untouched");
+  assert.ok(fs.existsSync(fake.helper), "helper keeps the name Electron looks for");
+  assert.ok(!fs.existsSync(path.join(fake.app, "Contents", "Frameworks", "Calc T Helper (GPU).app")), "no half-renamed helper");
+  assert.equal(signatureValid(fake.app), signedBefore, "the signature is as it was");
+  assert.deepEqual(fs.readdirSync(root).sort(), ["Calc.app"], "nothing left beside the copy");
+});
+
+test("unfinishedRefresh: an identity adoption cut off part-way counts too (#22 review, 4)", async () => {
+  const { unfinishedRefresh } = await import("../src/launchhelper.js");
+  const e = (message) => ({ at: 0, label: "Claude W", level: "INFO", message });
+  const start = "giving the copy its own identity (com.claude-multiprofile.w.claude)";
+  assert.equal(unfinishedRefresh("Claude W", [e(start)]).message, start);
+  assert.equal(unfinishedRefresh("Claude W", [e(start), e("gave the copy its own identity (com.claude-multiprofile.w.claude)")]), null);
+  assert.equal(unfinishedRefresh("Claude W", [e(start), e("could not give the copy its own identity (x): y; opening as is")]), null);
+});
+
+test("launch helper: adopting an identity is staged, logged first, and waits a click after a cut (#22 review, 3 and 4)", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("osascript is macOS only");
+    return;
+  }
+  const { HELPER_JS } = await import("../src/launchhelper.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-adopt-"));
+  t.after(() => {
+    execFileSyncForTests("/bin/chmod", ["-R", "u+w", root]);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const helper = path.join(root, "launch.js");
+  fs.writeFileSync(helper, HELPER_JS);
+  const logFile = path.join(root, "launch.log");
+  const plist = `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.anthropic.claudefordesktop</string><key>CFBundleName</key><string>Claude</string><key>CFBundleShortVersionString</key><string>2.0.0</string></dict></plist>`;
+  const source = path.join(root, "Source.app");
+  const clone = path.join(root, "Claude w.app");
+  for (const app of [source, clone]) {
+    fs.mkdirSync(path.join(app, "Contents"), { recursive: true });
+    fs.writeFileSync(path.join(app, "Contents", "Info.plist"), plist);
+  }
+  const own = "com.claude-multiprofile.w.claude";
+  const click = () =>
+    execFileSyncForTests("/usr/bin/osascript", ["-l", "JavaScript", helper, clone, source, "", path.join(root, "data"), "Claude W", "-a", clone], {
+      encoding: "utf8",
+      env: { ...process.env, CMP_LAUNCH_LOG: logFile, CMP_LAUNCH_IDENTITY: own },
+    }).trim();
+
+  // Right after a cut-off run: open as is, adopt on the next click.
+  fs.mkdirSync(clone + ".refreshing");
+  assert.equal(click(), "opened");
+  let log = fs.readFileSync(logFile, "utf8");
+  assert.match(log, /removed what it left behind/);
+  assert.doesNotMatch(log, /giving the copy its own identity/, "no adoption on the click after a cut");
+  assert.match(log, /gets its own identity on the next click/);
+
+  // Next click: adoption runs and fails part-way (its Info.plist cannot be
+  // rewritten), and the copy is untouched.
+  fs.chmodSync(path.join(clone, "Contents"), 0o555);
+  assert.equal(click(), "opened");
+  log = fs.readFileSync(logFile, "utf8");
+  assert.match(log, /giving the copy its own identity \(com\.claude-multiprofile\.w\.claude\)[\s\S]*could not give the copy its own identity/, "logged before and after");
+  assert.equal(fs.readFileSync(path.join(clone, "Contents", "Info.plist"), "utf8"), plist, "Info.plist untouched");
+  assert.deepEqual(fs.readdirSync(root).sort(), ["Claude w.app", "Source.app", "launch.js", "launch.log"], "nothing left beside the copy");
+});
+
+test("applyOwnIdentity: hardened runtime stays on; only library validation is relaxed (#22 review, 2)", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-identity-rt-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const fake = fakeElectronApp(root);
+  if (!fake) {
+    t.skip("needs macOS and a stock app to copy");
+    return;
+  }
+  const { applyOwnIdentity } = await import("../src/identity.js");
+  quietly(() => applyOwnIdentity(fake.app, { bundleId: "com.claude-multiprofile.t.claude", appName: "Calc T" }, ADHOC));
+  const helper = path.join(fake.app, "Contents", "Frameworks", "Calc T Helper (GPU).app");
+  for (const bundle of [fake.app, helper]) {
+    // codesign -dv reports on stderr.
+    const details = execFileSyncForTests("/bin/sh", ["-c", `/usr/bin/codesign -dv ${JSON.stringify(bundle)} 2>&1`], { encoding: "utf8" });
+    assert.match(details, /flags=0x[0-9a-f]+\([^)]*\bruntime\b/, `hardened runtime on: ${path.basename(bundle)}`);
+    const ents = execFileSyncForTests("/usr/bin/codesign", ["-d", "--entitlements", "-", "--xml", bundle], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    assert.ok(ents.includes("com.apple.security.cs.disable-library-validation"), `Anthropic-signed .node modules can load: ${path.basename(bundle)}`);
+    assert.ok(!ents.includes("allow-dyld-environment-variables"), `DYLD_* stays blocked: ${path.basename(bundle)}`);
+  }
+});
+
+test("own identity: the bundle ID is recorded once, so a rename keeps permissions (#22 review, 5)", async () => {
+  const { ownIdentityFor, withOwnIdentity } = await import("../src/identity.js");
+  const desktop = { dataDir: "/d", appPath: "/Users/x/Applications/Claude Work.app" };
+  const recorded = withOwnIdentity("work", desktop);
+  assert.equal(recorded.identity, "own");
+  assert.equal(recorded.bundleId, "com.claude-multiprofile.work.claude");
+  // Opting in again (or repairing) never replaces what was recorded.
+  assert.equal(withOwnIdentity("client", recorded).bundleId, "com.claude-multiprofile.work.claude");
+  // After `rename work client`: the bundle ID stays, the app name follows the launcher.
+  const renamed = { ...recorded, appPath: "/Users/x/Applications/Claude Client.app" };
+  assert.deepEqual(ownIdentityFor("client", renamed), { bundleId: "com.claude-multiprofile.work.claude", appName: "Claude Client" });
+  // A profile that opted in before the ID was recorded still gets one from its name.
+  assert.deepEqual(ownIdentityFor("work", { ...desktop, identity: "own" }), { bundleId: "com.claude-multiprofile.work.claude", appName: "Claude Work" });
+});
+
+test("rename: a profile with its own identity keeps its bundle ID, recorded or not (#22 review, 5)", async () => {
+  const { planRenamePaths } = await import("../src/commands/rename.js");
+  const { defaultDataDirFor, defaultAppPathFor } = await import("../src/desktop.js");
+  const profile = (extra) => ({
+    name: "work",
+    type: "desktop",
+    desktop: { dataDir: defaultDataDirFor("work"), appPath: defaultAppPathFor("work"), claudeAppPath: "/Applications/Claude.app", identity: "own", ...extra },
+  });
+  // Opted in before the ID was recorded: the one it has been using is recorded now.
+  assert.equal(planRenamePaths(profile({}), "work", "client").newDesktop.bundleId, "com.claude-multiprofile.work.claude");
+  assert.equal(planRenamePaths(profile({ bundleId: "com.claude-multiprofile.old.claude" }), "work", "client").newDesktop.bundleId, "com.claude-multiprofile.old.claude");
+  // A shared profile gets nothing new.
+  const shared = planRenamePaths({ ...profile({}), desktop: { ...profile({}).desktop, identity: undefined } }, "work", "client").newDesktop;
+  assert.equal(shared.bundleId, undefined);
+});
+
+test("signing: finds this Mac's signing key, untrusted or not, and only ours (#22 review, 1)", async () => {
+  const { parseSigningIdentity, SIGNING_NAME } = await import("../src/signing.js");
+  const out = `
+Policy: Code Signing
+  Matching identities
+  1) 1111111111111111111111111111111111111111 "Apple Development: someone (ABCDE12345)"
+  2) 9CA421ECB88A2FAE96E782B8DD197F0649245B99 "${SIGNING_NAME}" (CSSMERR_TP_NOT_TRUSTED)
+     2 identities found
+
+  Valid identities only
+  1) 1111111111111111111111111111111111111111 "Apple Development: someone (ABCDE12345)"
+     1 valid identities found
+`;
+  // Self-signed, so never "valid": what matters is that codesign can sign with it.
+  assert.equal(parseSigningIdentity(out), "9CA421ECB88A2FAE96E782B8DD197F0649245B99");
+  assert.equal(parseSigningIdentity(out.replace(SIGNING_NAME, "something else")), null);
+  assert.equal(parseSigningIdentity("     0 identities found\n"), null);
+});
+
+test("signing: the designated requirement is anchored to the key, not the bundle ID alone (#22 review, 1)", async () => {
+  const { designatedRequirement, requirementAnchored } = await import("../src/signing.js");
+  const leaf = "9CA421ECB88A2FAE96E782B8DD197F0649245B99";
+  assert.equal(
+    designatedRequirement("com.claude-multiprofile.work.claude", leaf),
+    'identifier "com.claude-multiprofile.work.claude" and certificate leaf = H"9ca421ecb88a2fae96e782b8dd197f0649245b99"'
+  );
+  // What codesign -d -r- prints for a copy signed that way, and for one signed before.
+  const anchored = 'designated => identifier "com.claude-multiprofile.work.claude" and certificate leaf = H"9ca421ecb88a2fae96e782b8dd197f0649245b99"\n';
+  assert.equal(requirementAnchored(anchored, leaf), true);
+  assert.equal(requirementAnchored('designated => identifier "com.claude-multiprofile.work.claude"\n', leaf), false, "claimable by anyone");
+  assert.equal(requirementAnchored(anchored, "0000000000000000000000000000000000000000"), false, "a key made since");
+});
+
+test("identityStatus: a copy signed before the key, or with another key, needs re-signing (#22 review, 1)", async () => {
+  const { identityStatus } = await import("../src/identity.js");
+  const own = { bundleId: "com.claude-multiprofile.work.claude", appName: "Claude WORK" };
+  const onDisk = { bundleId: own.bundleId, name: own.appName };
+  assert.equal(identityStatus({ wanted: own, actual: onDisk, signed: true, anchored: false }), "unanchored");
+  assert.equal(identityStatus({ wanted: own, actual: onDisk, signed: true, anchored: true }), "ok");
+  assert.equal(identityStatus({ wanted: own, actual: onDisk, signed: false, anchored: false }), "unsigned", "a broken signature first");
+  assert.equal(identityStatus({ wanted: own, actual: onDisk, signed: null }), "ok", "not checked: not reported");
+});
+
+test("signing: a declined key prompt is explained, anything else passes through (#22 review, 1)", async () => {
+  const { explainSigningError } = await import("../src/signing.js");
+  const declined = explainSigningError("/x/Claude W.app.refreshing: errSecInternalComponent");
+  assert.match(declined, /choose Allow \(not Always Allow\)/);
+  assert.equal(explainSigningError("no Info.plist in /x"), "no Info.plist in /x");
 });

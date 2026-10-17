@@ -120,7 +120,7 @@ v0.1.22 briefly marked launchers as background agents to hide a flicker. That st
 
 Since v0.1.23, clicking the icon again focuses the profile's existing window rather than opening a second copy. Each Desktop profile launches its own cloned copy of Claude.app, so `open` can address that profile specifically instead of forcing a new instance the way it must when profiles share one app.
 
-One thing that cannot be fixed: the running window is titled "Claude", not the profile name. That comes from `CFBundleName` inside the app, and editing it fails code signing and Gatekeeper. Give profiles different colours if you need to tell their windows apart.
+The running window is titled "Claude", not the profile name, because that comes from `CFBundleName` inside the app and editing it breaks Anthropic's signature. Colours tell windows apart without touching the app. A profile that opts into its [own app identity](#own-app-identity-opt-in) is re-signed, and its windows carry the profile's name.
 
 If a launcher's Dock icon is blank, its `applet.icns` is being overridden by the stock icon catalog `osacompile` ships. `doctor` reports it and `doctor --fix` or `repair` removes the catalog so the Claude icon is used. The same commands backfill the per-profile copy that older profiles lack.
 
@@ -133,8 +133,28 @@ Eight colours are available: orange, red, yellow, green, teal, blue, purple, pin
 What it costs, stated plainly:
 
 - **Disk: a few megabytes, not a few hundred.** The copy is an APFS clone (`cp -Rc`), so its blocks are shared with the original until one side changes. Measured on an 800MB Claude.app: about 1.5 seconds and 3MB of real disk.
-- **Signature: identity survives, strict verification does not.** The tint is attached as Finder metadata rather than by editing the bundle, so the copy still reports `com.anthropic.claudefordesktop` with Anthropic's Team ID, and Gatekeeper accepts it. `codesign --verify --deep --strict` does fail on it, the same as for any app carrying a custom icon.
+- **Signature: identity survives, strict verification does not.** The tint is attached as Finder metadata rather than by editing the bundle, so the copy still reports `com.anthropic.claudefordesktop` with Anthropic's Team ID, and Gatekeeper accepts it. `codesign --verify --deep --strict` does fail on it, the same as for any app carrying a custom icon. (A profile with its [own app identity](#own-app-identity-opt-in) gives this up on purpose.)
 - **Updates: see [How profiles stay up to date](#how-profiles-stay-up-to-date).** The copy is a real Claude.app, so left alone it updates itself, and each self-update throws away the colour and relaunches the copy on the wrong account. Since v0.1.29 the launcher keeps the copy current instead.
+
+### Own app identity (opt-in)
+
+Off by default. A profile's copy of Claude.app is a clone, so macOS sees it and `/Applications/Claude.app` as **the same application**: same bundle ID (`com.anthropic.claudefordesktop`), same signature, same name. That is what keeps Anthropic's signature intact, and it has a cost that only shows up when something addresses the app by identity rather than by window:
+
+- **Granting a permission quits every copy.** Turn on Screen Recording, Accessibility or Input Monitoring for Claude in System Settings and macOS offers "Quit & Reopen". That quit goes to every running process with the bundle ID, so your main Claude and every profile get Claude's "still working" prompt at the same moment, and whatever you answer in one of them ("Wait for Claude", "Quit anyway") has already been decided for the others too. This is how the problem was found: a permission granted for one profile interrupted the work in the other.
+- **Permissions are shared.** A grant or a revocation for "Claude" applies to all copies, with no way to give one profile Screen Recording and not another.
+- **Anything that looks the app up by identifier picks one at random:** AppleScript's `tell application "Claude"`, `tell application id "com.anthropic.claudefordesktop"`, `open -b`, and whatever else goes through LaunchServices by ID.
+
+`claude-multiprofile identity <name> own` (or saying yes in `add`) makes the profile's copy a separate application to macOS:
+
+- **Its own bundle ID**, `com.claude-multiprofile.<name>.claude`, so permission changes, quits and AppleScript reach this profile alone, and its permission grants are its own. macOS asks for them again on the next launch, since it is a new app as far as TCC is concerned.
+- **Its own name**, the launcher's (`Claude WORK`), in the menu bar, the Dock tile, Cmd-Tab and Force Quit. Electron derives the app name from `CFBundleName`, so the copy's helper apps are renamed with it.
+- **Still the main Claude's Keychain entry.** Electron names the entry that encrypts a profile's stored session after the product name built into Claude, not after the bundle, so the copy keeps using `Claude Safe Storage`, the same entry as your main Claude. That entry trusts Anthropic's signature, so macOS asks before the copy reads it (your login password). **Always Allow** adds the copy to the entry's access list, identified by its signature's designated requirement; that is one reason the requirement is anchored to a key on this Mac rather than to the bundle ID alone (below). **Deny** leaves the profile unable to read its stored session, so it asks you to sign in.
+- **Re-signed on this Mac.** Changing `Info.plist` breaks Anthropic's signature, and macOS does not start an app whose signature is broken, so the copy is signed again on this Mac. With that go the entitlements that need Apple's provisioning profile (`application-identifier`, `team-identifier`, `keychain-access-groups`), so **sign-in methods built on them are unavailable in that copy: passkeys, hardware keys, and Microsoft Entra for work accounts.** Email and Google sign-in are unaffected. The hardened runtime stays on, with one exception added: `disable-library-validation`, because Claude's native modules (`computer_use.node`, `pty.node`, …) keep Anthropic's signature and library validation would refuse them next to our signature. `DYLD_*` environment variables stay blocked, so the copy cannot be started with someone else's library injected. Gatekeeper is not involved: the copy is made locally and carries no quarantine flag.
+- **Signed with a key of this Mac's own.** The first time a profile gets its own identity, the tool creates a code-signing key in your login keychain, `claude-multiprofile local signing`: self-signed (no administrator, no trust settings), not extractable, and usable by no application without asking. Creating it asks for your login password once, in the terminal, so that `codesign` is allowed to ask for the key at all (its partition list). The copy's signature names the bundle ID **and** that key's certificate, so a copy rebuilt after a Claude update is the same app to TCC and the Keychain and keeps its permissions, and no other program can claim to be it: signing as `com.claude-multiprofile.<name>.claude` without the key does not meet the requirement. The cost: **each time the copy is re-signed, once per Claude update, macOS asks for your login password** to let `codesign` use the key. Click **Allow**, never **Always Allow**: that would let any program use the key without asking, and the protection would be gone. `doctor --fix` re-signs a copy that was signed without the key (by an earlier version, or before a key was recreated).
+
+The launcher keeps the identity across updates: when it rebuilds the copy from a newer `/Applications/Claude.app`, it applies the identity before opening it. `doctor` checks that the registry, the copy (bundle ID, name, a signature that verifies) and the launcher agree, and `doctor --fix` repairs whichever drifted; an open copy is left alone and fixed by its launcher on the next click. `identity <name> shared` goes back by rebuilding the copy from `/Applications/Claude.app`, which is the only thing that restores Anthropic's signature.
+
+What does not change: `claude://` links (sign-in, "open in Claude") still go to whichever Claude macOS treats as the default handler for the scheme, usually the one launched last, so the advice in [Desktop: signing in for the first time](#desktop-signing-in-for-the-first-time) still applies. And the Dock pin is still the launcher, never the copy.
 
 ### How profiles stay up to date
 
@@ -295,6 +315,10 @@ claude-multiprofile self-update work on      # let Claude update it itself
 claude-multiprofile self-update work off     # back to the default
 ```
 
+### `claude-multiprofile identity [name] [own|shared]`
+
+Whether a Desktop profile's copy of Claude is its own application to macOS, or shares Claude's identity (the default). With no arguments, shows every Desktop profile's setting and whether its copy on disk agrees. `identity work own` re-signs the copy with its own bundle ID and name and rebuilds the launcher; `identity work shared` rebuilds the copy from `/Applications/Claude.app`. Both need the profile to be closed. See [Own app identity](#own-app-identity-opt-in) for what each side costs.
+
 ### `claude-multiprofile upgrade [--no-fix]`
 
 Upgrades to the latest version on npm and applies its changes to your profiles, in one step.
@@ -316,6 +340,8 @@ This is the part most guides skip and most users get burned by.
 Some of Claude Desktop's sign-in methods finish in your browser, which hands the result back through a `claude://` link. macOS delivers that link to a running Claude, and it cannot tell a profile's copy from your main Claude: they share a bundle ID. If the main Claude is open, the link can reach it instead of the profile, and the sign-in never completes ([#24](https://github.com/jmdarre-v/claude-multiprofile/issues/24)).
 
 "Sign in with Google" is currently always one of these. Claude uses Apple's in-app sign-in sheet unless it believes it is the app that handles `claude://` links, and it decides that by bundle ID, so a profile's copy always believes it and goes through the browser.
+
+A profile with its [own app identity](#own-app-identity-opt-in) is the exception: its bundle ID is not Claude's, so Claude knows it is not the `claude://` handler, uses the in-app sheet, and the answer comes straight back to it whatever else is open. That is read from Claude's own code (its log says `[Auth] Not the claude:// handler; keeping ASWebAuth`); other sign-in methods that finish in the browser still need the steps below.
 
 So, for the first sign-in:
 
@@ -489,7 +515,7 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md). Please don't open a p
 
 - `~/Library/Application Support/Claude-{NAME}/`: each Desktop profile's data folder, created new. When you choose to copy MCP connectors (in `add`, or with `extensions`), its `claude_desktop_config.json` gains the ones you picked; connectors it already has, every other key (`preferences` included), and a file that does not parse are left as they are.
 - `~/Library/Application Support/Claude-{NAME}-3p/`: the setting that stops that profile's copy of Claude updating itself. Only written when the folder does not exist, because Claude also keeps third-party inference setups there; never edited if the tool did not create it.
-- `~/Library/Application Support/claude-multiprofile/`: each profile's copy of Claude.app (`apps/`, APFS clones carrying the colour as Finder metadata), the launch helper (`bin/launch.js`) and its log (`launch.log`).
+- `~/Library/Application Support/claude-multiprofile/`: each profile's copy of Claude.app (`apps/`, APFS clones carrying the colour as Finder metadata), the launch helper (`bin/launch.js`) and its log (`launch.log`). For a profile with its [own app identity](#own-app-identity-opt-in), the copy's `Info.plist`, helper app names and code signature (signed on this Mac, with the `claude-multiprofile local signing` key the tool adds to your login keychain) are rewritten; nothing outside the copy is.
 - `~/Applications/Claude {NAME}.app`: each profile's launcher, created new, and registered with macOS LaunchServices.
 - `~/.claude-{name}/`: each Code profile's config folder, created with owner-only permissions. When you choose to seed it, the tool copies setup from `~/.claude` from an allowlist, and the `mcpServers` entry of `~/.claude.json` (written with owner-only permissions), including any API keys or tokens in those settings and servers after explicit confirmation, and points paths in plugin manifests and settings at the profile's own copies. It adds cross-profile `permissions.deny` rules to `settings.json`, tracking only the rules it wrote and never removing yours. With GitHub CLI isolation on, `gh/` inside it holds that profile's `gh` login.
 - `~/.zshrc`, `~/.bash_profile` or `~/.config/fish/config.fish`: a delimited managed block of aliases. Lines outside the markers are never touched.
@@ -506,7 +532,7 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md). Please don't open a p
 
 **What it never does:**
 
-- Read or write the macOS Keychain, where Claude Code keeps its sign-in.
+- Read or write a Keychain entry it did not create. Claude Code keeps its sign-in there. (A profile with its [own app identity](#own-app-identity-opt-in) adds one entry of the tool's own, its code-signing key, which asks for your login password whenever it is used.)
 - Write to your default Claude: `~/Library/Application Support/Claude/`, `~/.claude` or `~/.claude.json`.
 - Delete conversations unless you ask it to. `remove` offers to delete a profile's folders, each behind its own confirmation that defaults to no. `doctor` only reports conversations an older seed copied into a profile and leaves the decision to you.
 - Quit a Claude window without asking. The launch helper only quits a profile's window that is open on the wrong account, after you confirm in a dialog.

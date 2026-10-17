@@ -48,7 +48,8 @@ import {
   defaultAppPathFor,
   dataDirInUse,
 } from "../desktop.js";
-import { clonePathFor, cloneIsRunning } from "../appclone.js";
+import { clonePathFor, cloneIsRunning, ensureColoredClone } from "../appclone.js";
+import { wantsOwnIdentity, ownIdentityFor, withOwnIdentity } from "../identity.js";
 import { moveUpdateBlock } from "../updates.js";
 import { RESERVED_NAMES, withoutClaudePrefix } from "./add.js";
 import {
@@ -85,7 +86,14 @@ function moveDir(from, to) {
 export function planRenamePaths(profile, oldName, newName) {
   const plan = [];
   const newCode = profile.code ? { ...profile.code } : null;
-  const newDesktop = profile.desktop ? { ...profile.desktop } : null;
+  // A profile with its own identity keeps its bundle ID, which TCC grants and
+  // the Keychain follow; one that opted in before it was recorded records the
+  // one derived from its old name.
+  const newDesktop = profile.desktop
+    ? wantsOwnIdentity(profile.desktop)
+      ? withOwnIdentity(oldName, profile.desktop)
+      : { ...profile.desktop }
+    : null;
 
   if (profile.code) {
     const defaultOld = defaultConfigDirFor(oldName);
@@ -321,6 +329,25 @@ export async function rename(args = []) {
       } catch (e) {
         warn(`Could not move its copy of Claude: ${e.message}`);
         info(`Run ${command("claude-multiprofile doctor --fix")} to build a new one.`);
+      }
+    }
+
+    // A copy with its own identity keeps its bundle ID, so its permissions
+    // stay; its app name follows the launcher. The Keychain entry is not
+    // affected: it is named after Claude's product name (src/identity.js).
+    if (wantsOwnIdentity(profile.desktop) && fileExists(newClone)) {
+      try {
+        const own = ownIdentityFor(newName, newDesktop);
+        ensureColoredClone({
+          name: newName,
+          claudeAppPath: profile.desktop.claudeAppPath,
+          color: profile.desktop.color || null,
+          identity: own,
+        });
+        ok("Its copy's name now matches the new launcher; its bundle ID and permissions are unchanged.");
+      } catch (e) {
+        warn(`Could not update its copy's identity: ${e.message}`);
+        info(`Run ${command("claude-multiprofile doctor --fix")} to apply it.`);
       }
     }
 

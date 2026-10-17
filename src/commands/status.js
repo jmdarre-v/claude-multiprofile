@@ -29,6 +29,8 @@ import {
   dim,
   printLaunchHints,
 } from "../util.js";
+import { clonePathFor } from "../appclone.js";
+import { wantsOwnIdentity, ownIdentityFor, readIdentity, identityStatus } from "../identity.js";
 
 export async function status() {
   header("Claude profiles status");
@@ -120,6 +122,15 @@ export async function status() {
         `    ${claudeOk ? "✓" : "✗"} Claude.app source: ${p.desktop.claudeAppPath}`
       );
       if (!claudeOk) issues++;
+
+      // A profile with its own app identity: is it on the copy? The deeper
+      // checks (signature, launcher) are doctor's.
+      if (wantsOwnIdentity(p.desktop)) {
+        const wanted = ownIdentityFor(p.name, p.desktop);
+        const state = identityStatus({ wanted, actual: readIdentity(clonePathFor(p.name)), signed: null });
+        console.log(`    ${state === "ok" ? "✓" : "✗"} Own identity: ${wanted.bundleId}`);
+        if (state !== "ok") issues++;
+      }
     }
 
     if (p.code) {

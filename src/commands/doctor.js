@@ -34,6 +34,7 @@ import {
   uniqueBundleId,
   launcherCodeConfigDir,
   launcherGhConfigDir,
+  launcherIdentity,
   setUiElement,
   isUiElement,
   desktopAccountUuid,
@@ -70,6 +71,11 @@ import {
   runningCopies,
   cloneIsRunning,
 } from "../appclone.js";
+import {
+  wantsOwnIdentity,
+  ownIdentityFor,
+  checkCopyIdentity,
+} from "../identity.js";
 import { resyncDenyRules, auditDenyRules, readProtectionEnabled } from "../permissions.js";
 import { updateBlockState, blockUpdates, wantsUpdateBlock } from "../updates.js";
 import { recordFixPass } from "../state.js";
@@ -772,6 +778,13 @@ export function clonesToVersionCheck(profiles, exists = fileExists) {
   );
 }
 
+// The app identity a profile's copy should carry: its own, or null for
+// Claude's. Every rebuild of a copy goes through here, so a profile that
+// opted in never comes back with the shared identity.
+function identityFor(p) {
+  return wantsOwnIdentity(p.desktop) ? ownIdentityFor(p.name, p.desktop) : null;
+}
+
 function checkAppClones(t, reg, fix) {
   if (!isMac()) return;
   // Every Desktop profile wants its own clone now, not just coloured ones:
@@ -798,6 +811,7 @@ function checkAppClones(t, reg, fix) {
         name: p.name,
         claudeAppPath: p.desktop.claudeAppPath,
         color: p.desktop.color || null,
+        identity: identityFor(p),
       });
       // The launcher has to be rebuilt to point at the new copy and drop -n.
       compileApp({
@@ -841,6 +855,7 @@ function checkAppClones(t, reg, fix) {
             name: p.name,
             claudeAppPath: p.desktop.claudeAppPath,
             color: p.desktop.color || null,
+            identity: identityFor(p),
             force: true,
           });
           ok("  Repaired: copy rebuilt from the current Claude.app.");
@@ -905,6 +920,116 @@ function checkAppClones(t, reg, fix) {
     } else {
       info(`  Repair with ${command("claude-multiprofile doctor --fix")}`);
       t.warnings++;
+    }
+  }
+}
+
+// ---- Check: each copy's app identity ----------------------------------------
+//
+// A profile that opted into its own identity (src/identity.js) needs three
+// things to agree: the registry (what it wants), the copy on disk (bundle ID,
+// name, a signature that verifies) and the launcher (which tells the helper
+// to keep the identity across Claude updates). A profile that went back to
+// Claude's identity needs the opposite: a copy that is a plain clone again.
+// The copy can only be touched when it is not running; the launcher does the
+// same job on the next click, so an open copy is a warning, not a problem.
+
+function checkIdentities(t, reg, fix) {
+  if (!isMac()) return;
+  const desktop = reg.profiles.filter(
+    (p) => p.desktop && p.desktop.appPath && p.desktop.claudeAppPath && fileExists(clonePathFor(p.name))
+  );
+  if (desktop.length === 0) return;
+
+  step("Desktop app identities");
+
+  for (const p of desktop) {
+    const clone = clonePathFor(p.name);
+    const wanted = identityFor(p);
+    // Includes whether it is signed with this Mac's key (src/signing.js): a
+    // copy signed before the key existed has a requirement anyone can meet.
+    const { actual, signer, state } = checkCopyIdentity(clone, wanted);
+    const running = cloneIsRunning(clone);
+
+    if (state === "needs-own" || state === "needs-shared" || state === "unsigned" || state === "unanchored") {
+      if (state === "needs-own") {
+        warn(`${p.name}: wants its own identity, but its copy still carries ${actual.bundleId}.`);
+        info("  macOS sees that copy and your main Claude as one app: a permission");
+        info('  change\'s "Quit & Reopen", or a quit addressed to "Claude", reaches both.');
+      } else if (state === "needs-shared") {
+        warn(`${p.name}: shares Claude's identity again, but its copy still carries ${actual.bundleId}.`);
+      } else if (state === "unanchored") {
+        warn(`${p.name}: its copy is not signed with this Mac's signing key.`);
+        info("  Its signature names only the bundle ID, which any program can sign itself");
+        info("  with, and so claim the permissions you granted this profile.");
+        if (fix && !signer) info("  The key is created now; macOS asks for your login password to sign with it.");
+      } else {
+        warn(`${p.name}: its copy has the right identity, but its signature does not verify.`);
+        info("  macOS refuses to start an app whose signature is broken.");
+      }
+      if (!fix) {
+        info(`  Repair with ${command("claude-multiprofile doctor --fix")}`);
+        t.warnings++;
+      } else if (running) {
+        info("  It is open right now, so it was left alone; its launcher applies this on the next launch.");
+        t.warnings++;
+      } else {
+        try {
+          // Own: applied on a clone beside the copy, then swapped in. Shared, a
+          // broken signature, or one not made with this Mac's key: a fresh
+          // copy from Claude.app first.
+          ensureColoredClone({
+            name: p.name,
+            claudeAppPath: p.desktop.claudeAppPath,
+            color: p.desktop.color || null,
+            identity: wanted,
+            force: state !== "needs-own",
+          });
+          ok(wanted ? `  Repaired: the copy is now ${wanted.appName} (${wanted.bundleId}).` : "  Repaired: the copy is a plain clone of Claude.app again.");
+        } catch (e) {
+          err(`  Could not change the copy: ${e.message}`);
+          t.problems++;
+        }
+      }
+    } else if (state === "ok") {
+      ok(wanted ? `${p.name}: its own app, ${dim(wanted.bundleId)}` : `${p.name}: Claude's identity, shared with your main Claude`);
+    }
+
+    // The launcher must agree, or the next Claude update rebuilds the copy
+    // without the identity (or with one the profile no longer wants).
+    const passed = launcherIdentity(p.desktop.appPath);
+    const expectedId = wanted ? wanted.bundleId : null;
+    if (passed === undefined) {
+      warn(`${p.name}: could not read the launcher's script.`);
+      t.warnings++;
+      continue;
+    }
+    if (passed === expectedId) continue;
+    warn(
+      expectedId
+        ? `${p.name}: its launcher does not tell the launch helper to keep the identity across updates.`
+        : `${p.name}: its launcher still tells the launch helper to apply ${passed}.`
+    );
+    if (!fix) {
+      info(`  Repair with ${command("claude-multiprofile doctor --fix")}`);
+      t.warnings++;
+      continue;
+    }
+    try {
+      compileApp({
+        name: p.name,
+        dataDir: p.desktop.dataDir,
+        appPath: p.desktop.appPath,
+        ...launchTargetFor(p.name, p.desktop),
+        codeConfigDir: p.code ? p.code.configDir : undefined,
+        ghConfigDir: p.code ? p.code.ghConfigDir || undefined : undefined,
+      });
+      copyClaudeIcon(p.desktop.appPath, p.desktop.claudeAppPath);
+      refreshLauncher(p.desktop.appPath);
+      ok("  Repaired: launcher rebuilt.");
+    } catch (e) {
+      err(`  Could not rebuild the launcher: ${e.message}`);
+      t.problems++;
     }
   }
 }
@@ -1517,6 +1642,7 @@ export async function doctor(args = []) {
   checkLauncherEnv(t, reg, fix);
   checkAccountCollisions(t, reg);
   checkAppClones(t, reg, fix);
+  checkIdentities(t, reg, fix);
   checkManagedUpdates(t, reg, fix);
   checkDesktopLaunchPath(t, reg);
   checkGhIsolation(t, reg, fix);
