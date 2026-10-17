@@ -20,6 +20,7 @@ import { compileApp, launchTargetFor, copyClaudeIcon, dataDirInUse } from "../de
 import {
   wantsOwnIdentity,
   ownIdentityFor,
+  withOwnIdentity,
   readIdentity,
   identityStatus,
   signatureValid,
@@ -38,7 +39,7 @@ function describe(p) {
     }
     return "shared: macOS sees it and your main Claude as one app";
   }
-  const wanted = ownIdentityFor(p.name, p.desktop.appPath);
+  const wanted = ownIdentityFor(p.name, p.desktop);
   const actual = readIdentity(clone);
   const signed = actual && actual.bundleId === wanted.bundleId ? signatureValid(clone) : null;
   const state = identityStatus({ wanted, actual, signed });
@@ -103,9 +104,9 @@ export async function identity(args) {
     process.exit(1);
   }
 
-  const { identity: _dropped, ...rest } = profile.desktop;
-  const desktop = wantOwn ? { ...rest, identity: "own" } : rest;
-  const own = wantOwn ? ownIdentityFor(profile.name, desktop.appPath) : null;
+  const { identity: _dropped, bundleId: _droppedId, ...rest } = profile.desktop;
+  const desktop = wantOwn ? withOwnIdentity(profile.name, rest) : rest;
+  const own = wantOwn ? ownIdentityFor(profile.name, desktop) : null;
 
   step(wantOwn ? `Giving ${profile.name}'s copy of Claude its own identity` : `Restoring Claude's identity on ${profile.name}'s copy`);
   if (wantOwn) {
