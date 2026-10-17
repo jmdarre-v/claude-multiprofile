@@ -530,7 +530,7 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md). Please don't open a p
 
 **What it never does:**
 
-- Read or write the macOS Keychain, where Claude Code keeps its sign-in.
+- Read or write a Keychain entry it did not create. Claude Code keeps its sign-in there. (A profile with its [own app identity](#own-app-identity-opt-in) adds one entry of the tool's own, its code-signing key, which asks for your login password whenever it is used.)
 - Write to your default Claude: `~/Library/Application Support/Claude/`, `~/.claude` or `~/.claude.json`.
 - Delete conversations unless you ask it to. `remove` offers to delete a profile's folders, each behind its own confirmation that defaults to no. `doctor` only reports conversations an older seed copied into a profile and leaves the decision to you.
 - Quit a Claude window without asking. The launch helper only quits a profile's window that is open on the wrong account, after you confirm in a dialog.
