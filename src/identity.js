@@ -36,9 +36,9 @@
 //     adds the copy's designated requirement to that entry's access list,
 //     which is one more reason the requirement must not be claimable by
 //     another program (see signing below).
-//   - Re-signed ad hoc. Changing Info.plist breaks Anthropic's signature, and
-//     an app with a broken signature does not start, so the copy is signed
-//     again on this Mac. Three things go with the old signature:
+//   - Re-signed on this Mac. Changing Info.plist breaks Anthropic's
+//     signature, and an app with a broken signature does not start, so the
+//     copy is signed again. Three things go with the old signature:
 //       * The entitlements that need Apple's provisioning profile
 //         (application-identifier, team-identifier, keychain-access-groups).
 //         Sign-in methods built on them (passkeys, hardware keys, Microsoft
@@ -116,7 +116,13 @@ export function wantsOwnIdentity(desktop) {
 // Keychain follow it, so a rename must not change it. Keeps one already
 // recorded.
 export function withOwnIdentity(name, desktop) {
-  return { ...desktop, identity: "own", bundleId: desktop.bundleId || ownBundleIdFor(name) };
+  return { ...desktop, identity: "own", bundleId: recordedBundleId(name, desktop) };
+}
+
+// The recorded bundle ID, or, for a profile that opted in before it was
+// recorded, the one derived from its name.
+function recordedBundleId(name, desktop) {
+  return desktop.bundleId || ownBundleIdFor(name);
 }
 
 // The identity a profile's copy carries when it has its own: the recorded
@@ -124,7 +130,7 @@ export function withOwnIdentity(name, desktop) {
 // recorded), and the app name from the launcher, which is the name the user
 // already knows the profile by.
 export function ownIdentityFor(name, desktop) {
-  return { bundleId: desktop.bundleId || ownBundleIdFor(name), appName: path.basename(desktop.appPath, ".app") };
+  return { bundleId: recordedBundleId(name, desktop), appName: path.basename(desktop.appPath, ".app") };
 }
 
 // "shared" is Claude's own identity, "own" one of ours, "foreign" anything
@@ -193,7 +199,10 @@ export function checkCopyIdentity(clonePath, wanted) {
 // ---- The JXA ------------------------------------------------------------------
 //
 // Self-contained: its own Foundation import, shell runner and file manager,
-// under names that do not clash with the launch helper's, which inlines it.
+// under names that do not clash with the launch helper's, which inlines it:
+// helpers are prefixed id*, and the rest are named for what they do to an
+// identity (applyIdentity, signCopy, ...), which the helper never defines.
+// The signing helpers are pasted in from src/signing.js.
 // Everything is macOS's own: NSMutableDictionary for the plists, NSFileManager
 // for the renames, codesign for the signature, removexattr for the quarantine
 // flag.
@@ -355,14 +364,19 @@ function signCopy(appPath, bundleId, entitlementsPath, signer) {
 }
 
 // Give a copy of Claude.app its own identity. Returns 'already' when it has
-// exactly this one, signed with this Mac's key, 'applied' otherwise. The colour (Finder metadata on the
-// bundle) is removed on the way, because the signature would seal it in as
-// detritus; callers put it back afterwards.
+// exactly this one, signed with this Mac's key, 'applied' otherwise. The
+// colour (Finder metadata on the bundle) is removed on the way, because the
+// signature would seal it in as detritus; callers put it back afterwards.
+// The bundle carries this identity, signed with this key.
+function idHas(appPath, current, bundleId, appName, signer) {
+  return current.bundleId === bundleId && current.name === appName && idAnchored(appPath, signer);
+}
+
 function applyIdentity(appPath, bundleId, appName, signer) {
   signer = signer || idSigner();
   var current = identityOf(appPath);
   if (!current) throw new Error('no Info.plist in ' + appPath);
-  if (current.bundleId === bundleId && current.name === appName && idAnchored(appPath, signer)) return 'already';
+  if (idHas(appPath, current, bundleId, appName, signer)) return 'already';
   var contents = appPath + '/Contents';
   idRemove(appPath + '/Icon\\r');
   idRemoveXattr(appPath, 'com.apple.FinderInfo');
@@ -403,7 +417,7 @@ function applyIdentityStaged(appPath, bundleId, appName, signer) {
   signer = signer || idSigner();
   var current = identityOf(appPath);
   if (!current) throw new Error('no Info.plist in ' + appPath);
-  if (current.bundleId === bundleId && current.name === appName && idAnchored(appPath, signer)) return 'already';
+  if (idHas(appPath, current, bundleId, appName, signer)) return 'already';
   var tmp = appPath + '.refreshing', old = appPath + '.previous';
   try {
     idDiscard(tmp);
@@ -418,7 +432,9 @@ function applyIdentityStaged(appPath, bundleId, appName, signer) {
     try { idDiscard(tmp); } catch (e2) {}
     throw e;
   }
-  idDiscard(old);
+  // The new copy is in place; a previous one left behind is cleaned up by
+  // the launch helper's recover() or doctor, not reported as a failure.
+  try { idDiscard(old); } catch (e) {}
   return 'applied';
 }
 `;

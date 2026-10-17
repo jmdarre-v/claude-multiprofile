@@ -8,8 +8,8 @@
 //                         change's "Quit & Reopen", a quit by name or an
 //                         AppleScript reaches both.
 //   own                   The copy gets its own bundle ID, its own name (the
-//                         launcher's), its own permissions and Keychain entry,
-//                         re-signed locally. See src/identity.js for what that
+//                         launcher's) and its own permissions, re-signed with
+//                         a key made on this Mac. See src/identity.js for what that
 //                         costs: Anthropic's signature, and the sign-in methods
 //                         that need its keychain access groups.
 
@@ -125,7 +125,7 @@ export async function identity(args) {
     ok(wantOwn ? "Copy re-signed with its own identity." : "Copy rebuilt from Claude.app, Anthropic's signature and all.");
   } catch (e) {
     err(`Could not change the copy: ${e.message}`);
-    info("Nothing was recorded. Fix the cause and run this again.");
+    info("The profile and its copy were left as they were. Fix the cause and run this again.");
     process.exit(1);
   }
 

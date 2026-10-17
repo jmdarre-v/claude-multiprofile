@@ -975,8 +975,9 @@ function checkIdentities(t, reg, fix) {
         t.warnings++;
       } else {
         try {
-          // Own: applied in place. Shared, or a broken signature: a fresh copy
-          // from Claude.app, which is the only thing that restores a signature.
+          // Own: applied on a clone beside the copy, then swapped in. Shared, a
+          // broken signature, or one not made with this Mac's key: a fresh
+          // copy from Claude.app first.
           ensureColoredClone({
             name: p.name,
             claudeAppPath: p.desktop.claudeAppPath,
