@@ -2567,6 +2567,27 @@ test("launch helper: adopting an identity is staged, logged first, and waits a c
   assert.deepEqual(fs.readdirSync(root).sort(), ["Claude w.app", "Source.app", "launch.js", "launch.log"], "nothing left beside the copy");
 });
 
+test("applyOwnIdentity: hardened runtime stays on; only library validation is relaxed (#22 review, 2)", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-identity-rt-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const fake = fakeElectronApp(root);
+  if (!fake) {
+    t.skip("needs macOS and a stock app to copy");
+    return;
+  }
+  const { applyOwnIdentity } = await import("../src/identity.js");
+  quietly(() => applyOwnIdentity(fake.app, { bundleId: "com.claude-multiprofile.t.claude", appName: "Calc T" }));
+  const helper = path.join(fake.app, "Contents", "Frameworks", "Calc T Helper (GPU).app");
+  for (const bundle of [fake.app, helper]) {
+    // codesign -dv reports on stderr.
+    const details = execFileSyncForTests("/bin/sh", ["-c", `/usr/bin/codesign -dv ${JSON.stringify(bundle)} 2>&1`], { encoding: "utf8" });
+    assert.match(details, /flags=0x[0-9a-f]+\([^)]*\bruntime\b/, `hardened runtime on: ${path.basename(bundle)}`);
+    const ents = execFileSyncForTests("/usr/bin/codesign", ["-d", "--entitlements", "-", "--xml", bundle], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    assert.ok(ents.includes("com.apple.security.cs.disable-library-validation"), `Anthropic-signed .node modules can load: ${path.basename(bundle)}`);
+    assert.ok(!ents.includes("allow-dyld-environment-variables"), `DYLD_* stays blocked: ${path.basename(bundle)}`);
+  }
+});
+
 test("own identity: the bundle ID is recorded once, so a rename keeps permissions (#22 review, 5)", async () => {
   const { ownIdentityFor, withOwnIdentity } = await import("../src/identity.js");
   const desktop = { dataDir: "/d", appPath: "/Users/x/Applications/Claude Work.app" };

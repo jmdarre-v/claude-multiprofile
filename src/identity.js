@@ -26,9 +26,16 @@
 //   - CFBundleName "Claude <Name>", the launcher's name. Electron derives the
 //     app name from it, so the menu bar, the Dock tile, Cmd-Tab and Force
 //     Quit finally say which profile a window is. Its helper apps are
-//     renamed with it (Electron looks them up as "<name> Helper.app"), and
-//     Electron's Keychain entry for the copy's encrypted storage becomes
-//     "<name> Safe Storage" instead of being shared with the main Claude.
+//     renamed with it (Electron looks them up as "<name> Helper.app").
+//     Electron's Keychain entry for encrypted storage is NOT renamed: it is
+//     named after the product name built into Claude's app.asar, so every
+//     copy, own identity or not, uses "Claude Safe Storage", the main
+//     Claude's entry. Seen 2026-10-17: a copy named "Claude Smoke" asked for
+//     "Claude Safe Storage", and no "<name> Safe Storage" entry exists. macOS
+//     asks before a copy with its own identity reads it, and "Always Allow"
+//     adds the copy's designated requirement to that entry's access list,
+//     which is one more reason the requirement must not be claimable by
+//     another program (see signing below).
 //   - Re-signed ad hoc. Changing Info.plist breaks Anthropic's signature, and
 //     an app with a broken signature does not start, so the copy is signed
 //     again locally. Three things go with the old signature:
@@ -37,10 +44,15 @@
 //         Sign-in methods built on them (passkeys, hardware keys, Microsoft
 //         Entra for work accounts) are unavailable in such a copy; email and
 //         Google sign-in are unaffected. The msauth URL scheme goes too.
-//       * The hardened runtime. Claude's frameworks and native modules keep
-//         Anthropic's signature, and library validation would refuse to load
-//         them next to an ad hoc main executable. Without the hardened
-//         runtime there is no library validation.
+//       * Library validation, and only that. Six native modules in
+//         app.asar.unpacked (computer_use.node, swift_addon.node,
+//         claude-native-binding.node, pty.node x2, msal-node-runtime.node)
+//         keep Anthropic's signature, and library validation refuses them
+//         next to an executable signed by anyone else. The hardened runtime
+//         stays on, with the disable-library-validation entitlement added;
+//         DYLD_* injection stays blocked, since allowing it is a separate
+//         entitlement (allow-dyld-environment-variables) that is never
+//         added.
 //       * Gatekeeper's blessing. It never looks: the copy is made locally and
 //         carries no quarantine flag (a flag inherited from /Applications is
 //         removed), and Gatekeeper only assesses quarantined apps.
@@ -157,19 +169,25 @@ export function identityStatus({ wanted, actual, signed }) {
 // Self-contained: its own Foundation import, shell runner and file manager,
 // under names that do not clash with the launch helper's, which inlines it.
 // Everything is macOS's own: NSMutableDictionary for the plists, NSFileManager
-// for the renames, codesign for the signature, xattr for the quarantine flag.
+// for the renames, codesign for the signature, removexattr for the quarantine
+// flag.
 
 export const IDENTITY_JXA = `
 // ---- Own app identity. See src/identity.js in the claude-multiprofile repo. ----
 ObjC.import('Foundation');
+ObjC.bindFunction('removexattr', ['int', ['char *', 'char *', 'int']]);
 var idApp = Application.currentApplication();
 idApp.includeStandardAdditions = true;
 var idFm = $.NSFileManager.defaultManager;
 var ID_CODESIGN = '/usr/bin/codesign';
-var ID_XATTR = '/usr/bin/xattr';
 // Entitlements that survive a re-sign. The rest need Apple's provisioning
 // profile, and an app that claims them without one does not start.
 var ID_KEEP_ENTITLEMENTS = 'com.apple.security.';
+// Added to every re-signed bundle: Claude's native modules keep Anthropic's
+// signature, which library validation refuses next to our own. It relaxes
+// that one check; DYLD_* variables stay blocked by the hardened runtime,
+// since allowing them is a separate entitlement we never add.
+var ID_DISABLE_LIBRARY_VALIDATION = 'com.apple.security.cs.disable-library-validation';
 
 function idQ(s) { return "'" + String(s).replace(/'/g, "'\\\\''") + "'"; }
 function idSh(cmd) { return idApp.doShellScript(cmd); }
@@ -178,6 +196,20 @@ function idPlist(p) { return $.NSMutableDictionary.dictionaryWithContentsOfFile(
 function idStr(d, key) { var v = d.objectForKey(key); return v.isNil() ? null : String(v.js); }
 function idSet(d, key, value) { d.setObjectForKey($(value), key); }
 function idRemove(p) { if (idExists(p)) idFm.removeItemAtPathError(p, null); }
+
+// Remove an extended attribute by path, from this process. Not /usr/bin/xattr:
+// it opens every file, and endpoint security agents (Defender, BeyondTrust)
+// hold each open by a process started from osascript while they inspect it.
+// On a managed Mac that turned removing the quarantine flag from Claude's
+// ~4,000 files into minutes; removexattr opens nothing and takes under a
+// second. XATTR_NOFOLLOW: a link's own attribute, never its target's.
+function idRemoveXattr(p, name) { $.removexattr(p, name, 1); }
+function idRemoveXattrTree(root, name) {
+  idRemoveXattr(root, name);
+  (ObjC.deepUnwrap(idFm.subpathsOfDirectoryAtPathError(root, null)) || []).forEach(function (sub) {
+    idRemoveXattr(root + '/' + sub, name);
+  });
+}
 
 // The identity a bundle carries now.
 function identityOf(appPath) {
@@ -215,25 +247,24 @@ function renameHelpers(appPath, oldName, newName, bundleId) {
   });
 }
 
-// Keep the hardened-runtime entitlements, drop the ones that need Apple's
-// provisioning profile. Returns false when the app has none to keep.
+// The entitlements a bundle is re-signed with: its own hardened-runtime ones,
+// without those that need Apple's provisioning profile, plus library
+// validation turned off.
 function writeKeptEntitlements(appPath, outPath) {
   var xml = '';
   try { xml = idSh(ID_CODESIGN + ' -d --entitlements - --xml ' + idQ(appPath) + ' 2>/dev/null'); } catch (e) { xml = ''; }
-  if (!xml) return false;
-  var data = $(xml).dataUsingEncoding($.NSUTF8StringEncoding);
-  var plist = $.NSPropertyListSerialization.propertyListWithDataOptionsFormatError(data, 0, null, null);
-  if (plist.isNil()) return false;
-  var keys = ObjC.deepUnwrap(plist.allKeys) || [];
   var out = $.NSMutableDictionary.dictionary;
-  var kept = 0;
-  keys.forEach(function (k) {
-    if (String(k).indexOf(ID_KEEP_ENTITLEMENTS) !== 0) return;
-    out.setObjectForKey(plist.objectForKey(k), k);
-    kept++;
-  });
-  if (!kept) return false;
-  return Boolean(out.writeToFileAtomically(outPath, true));
+  if (xml) {
+    var data = $(xml).dataUsingEncoding($.NSUTF8StringEncoding);
+    var plist = $.NSPropertyListSerialization.propertyListWithDataOptionsFormatError(data, 0, null, null);
+    if (!plist.isNil()) {
+      (ObjC.deepUnwrap(plist.allKeys) || []).forEach(function (k) {
+        if (String(k).indexOf(ID_KEEP_ENTITLEMENTS) === 0) out.setObjectForKey(plist.objectForKey(k), k);
+      });
+    }
+  }
+  out.setObjectForKey($.NSNumber.numberWithBool(true), ID_DISABLE_LIBRARY_VALIDATION);
+  if (!out.writeToFileAtomically(outPath, true)) throw new Error('could not write the entitlements for ' + appPath);
 }
 
 // The msauth.<bundle id> scheme is Microsoft's broker callback, tied to the
@@ -252,18 +283,27 @@ function dropMsalUrlTypes(d) {
   d.setObjectForKey(keep, 'CFBundleURLTypes');
 }
 
-// Ad hoc, inner bundles first, no hardened runtime (see the module comment).
-// The designated requirement is the identifier alone, so a rebuilt copy is
-// the same app to TCC and the Keychain.
+// Inner bundles first, all with the hardened runtime (see the module
+// comment). Helper apps keep their own entitlements, through
+// writeKeptEntitlements like the app itself.
 function signAdHoc(appPath, bundleId, entitlementsPath) {
   var fw = appPath + '/Contents/Frameworks';
   var nested = ObjC.deepUnwrap(idFm.contentsOfDirectoryAtPathError(fw, null)) || [];
   nested.forEach(function (n) {
-    if (n.slice(-4) !== '.app' && n.slice(-10) !== '.framework') return;
-    idSh(ID_CODESIGN + ' --force --deep --sign - --preserve-metadata=entitlements ' + idQ(fw + '/' + n) + ' 2>&1');
+    var inner = fw + '/' + n;
+    if (n.slice(-10) === '.framework') {
+      idSh(ID_CODESIGN + ' --force --deep --sign - ' + idQ(inner) + ' 2>&1');
+    } else if (n.slice(-4) === '.app') {
+      var ents = entitlementsPath + '.' + n.replace(/[^A-Za-z0-9]+/g, '-') + '.plist';
+      try {
+        writeKeptEntitlements(inner, ents);
+        idSh(ID_CODESIGN + ' --force --sign - --options runtime --entitlements ' + idQ(ents) + ' ' + idQ(inner) + ' 2>&1');
+      } finally {
+        idRemove(ents);
+      }
+    }
   });
-  idSh(ID_CODESIGN + ' --force --sign - ' +
-    (entitlementsPath ? '--entitlements ' + idQ(entitlementsPath) + ' ' : '') +
+  idSh(ID_CODESIGN + ' --force --sign - --options runtime --entitlements ' + idQ(entitlementsPath) + ' ' +
     "-r '=designated => identifier \\"" + bundleId + "\\"' " + idQ(appPath) + ' 2>&1');
   idSh(ID_CODESIGN + ' --verify ' + idQ(appPath) + ' 2>&1');
 }
@@ -278,13 +318,14 @@ function applyIdentity(appPath, bundleId, appName) {
   if (current.bundleId === bundleId && current.name === appName) return 'already';
   var contents = appPath + '/Contents';
   idRemove(appPath + '/Icon\\r');
-  try { idSh(ID_XATTR + ' -d com.apple.FinderInfo ' + idQ(appPath) + ' 2>/dev/null'); } catch (e) {}
-  // A quarantine flag inherited from /Applications would send an ad hoc
-  // signed app to Gatekeeper, which only accepts certificates.
-  try { idSh(ID_XATTR + ' -dr com.apple.quarantine ' + idQ(appPath) + ' 2>/dev/null'); } catch (e) {}
+  idRemoveXattr(appPath, 'com.apple.FinderInfo');
+  // A quarantine flag inherited from /Applications (it is on every file)
+  // would send an ad hoc signed app to Gatekeeper, which only accepts
+  // certificates.
+  idRemoveXattrTree(appPath, 'com.apple.quarantine');
   var entitlements = $.NSTemporaryDirectory().js + 'cmp-entitlements-' + $.NSProcessInfo.processInfo.processIdentifier + '.plist';
-  var kept = writeKeptEntitlements(appPath, entitlements);
   try {
+    writeKeptEntitlements(appPath, entitlements);
     renameHelpers(appPath, current.name, appName, bundleId);
     var d = idPlist(contents + '/Info.plist');
     idSet(d, 'CFBundleIdentifier', bundleId);
@@ -293,7 +334,7 @@ function applyIdentity(appPath, bundleId, appName) {
     dropMsalUrlTypes(d);
     if (!d.writeToFileAtomically(contents + '/Info.plist', true)) throw new Error('could not write Info.plist');
     idRemove(contents + '/embedded.provisionprofile');
-    signAdHoc(appPath, bundleId, kept ? entitlements : null);
+    signAdHoc(appPath, bundleId, entitlements);
   } finally {
     idRemove(entitlements);
   }
