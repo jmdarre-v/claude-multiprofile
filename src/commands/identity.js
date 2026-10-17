@@ -23,7 +23,7 @@ import {
   withOwnIdentity,
   readIdentity,
   identityStatus,
-  signatureValid,
+  checkCopyIdentity,
 } from "../identity.js";
 import { header, ok, warn, err, info, step, explain, command, pathStr, tildify, fileExists, isMac } from "../util.js";
 
@@ -40,12 +40,11 @@ function describe(p) {
     return "shared: macOS sees it and your main Claude as one app";
   }
   const wanted = ownIdentityFor(p.name, p.desktop);
-  const actual = readIdentity(clone);
-  const signed = actual && actual.bundleId === wanted.bundleId ? signatureValid(clone) : null;
-  const state = identityStatus({ wanted, actual, signed });
+  const { state } = checkCopyIdentity(clone, wanted);
   if (state === "ok") return `own: ${wanted.bundleId}`;
   if (state === "missing") return "own, but it has no copy yet: run `claude-multiprofile doctor --fix`";
   if (state === "unsigned") return "own, but the copy's signature does not verify: run `claude-multiprofile doctor --fix`";
+  if (state === "unanchored") return "own, but the copy is not signed with this Mac's key: run `claude-multiprofile doctor --fix`";
   return "own, but not on the copy yet: open the profile, or run `claude-multiprofile doctor --fix`";
 }
 

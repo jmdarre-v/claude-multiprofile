@@ -2424,8 +2424,10 @@ test("launch helper: accepts a copy with its own identity, and adopts one that l
     ).trim();
 
   const own = "com.claude-multiprofile.t.claude";
-  // Its own identity is ours: opened, not refused as "not Claude".
-  assert.equal(decide(fakeApp("Own.app", own), own), "not running: current");
+  // Its own identity is ours: opened, not refused as "not Claude". This one
+  // is not signed with this Mac's key, so it is re-signed first (#22 review, 1):
+  // a copy signed by an earlier version has a requirement anyone can meet.
+  assert.equal(decide(fakeApp("Own.app", own), own), `not running: current; would-adopt ${own}`);
   // Same copy, launcher no longer passing an identity: still opened. Going
   // back to Claude's identity is the tool's job (a fresh copy), not the helper's.
   assert.equal(decide(fakeApp("Own2.app", own)), "not running: current");
