@@ -341,6 +341,8 @@ Some of Claude Desktop's sign-in methods finish in your browser, which hands the
 
 "Sign in with Google" is currently always one of these. Claude uses Apple's in-app sign-in sheet unless it believes it is the app that handles `claude://` links, and it decides that by bundle ID, so a profile's copy always believes it and goes through the browser.
 
+A profile with its [own app identity](#own-app-identity-opt-in) is the exception: its bundle ID is not Claude's, so Claude knows it is not the `claude://` handler, uses the in-app sheet, and the answer comes straight back to it whatever else is open. That is read from Claude's own code (its log says `[Auth] Not the claude:// handler; keeping ASWebAuth`); other sign-in methods that finish in the browser still need the steps below.
+
 So, for the first sign-in:
 
 1. Quit any other Claude window with **Cmd+Q** before doing the very first launch of the new profile.

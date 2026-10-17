@@ -186,5 +186,10 @@ export async function identity(args) {
       and your main Claude together.
     `);
   }
-  warn("Signing in: quit your other Claude first, or the claude:// link can land on the wrong one.");
+  if (wantOwn) {
+    info("Signing in with Google uses the sheet inside the app, so other Claude windows can stay open.");
+    info("Any sign-in that finishes in your browser still answers through claude://: quit your other Claude first for those.");
+  } else {
+    warn("Signing in: quit your other Claude first, or the claude:// link can land on the wrong one.");
+  }
 }
