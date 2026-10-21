@@ -2300,3 +2300,48 @@ test("withoutClaudePrefix: a name that would double the Claude the tool adds (#2
   assert.equal(withoutClaudePrefix("claudette"), null, "only the word itself");
   assert.equal(withoutClaudePrefix("work"), null);
 });
+
+test("profile: currentProfile is the saved default", async () => {
+  const { currentProfile, savedDefault } = await import("../src/commands/profile.js");
+  assert.equal(currentProfile(), savedDefault());
+  assert.equal(typeof savedDefault(), "string");
+});
+
+test("profile: listProfiles always starts with default", async () => {
+  const { listProfiles } = await import("../src/commands/profile.js");
+  assert.equal(listProfiles()[0].name, "default");
+});
+
+test("profile: fish wrapper calls resolve-dir and keeps the real claude path", async () => {
+  const { shellInitCmd } = await import("../src/commands/profile.js");
+  const lines = [];
+  const orig = console.log;
+  console.log = (...a) => lines.push(a.join(" "));
+  try { shellInitCmd(["fish"]); } finally { console.log = orig; }
+  const text = lines.join("\n");
+  assert.match(text, /function claude --wraps claude/);
+  assert.match(text, /resolve-dir/);
+  assert.match(text, /env -u CLAUDE_CONFIG_DIR/);
+  assert.doesNotMatch(text, /CMP_EVAL_FILE|claude-multiprofile --wraps/);
+});
+
+test("history: linkHistory shares projects and history.jsonl and keeps the old copy aside", async () => {
+  const { linkHistory } = await import("../src/history.js");
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-history-"));
+  const from = path.join(base, "from");
+  const to = path.join(base, "to");
+  fs.mkdirSync(path.join(from, "projects"), { recursive: true });
+  fs.writeFileSync(path.join(from, "history.jsonl"), "{}\n");
+  fs.mkdirSync(path.join(to, "projects"), { recursive: true });
+  fs.writeFileSync(path.join(to, "projects", "old.txt"), "keep me");
+  const notes = linkHistory(from, to);
+  assert.ok(notes.length >= 2);
+  assert.equal(fs.readlinkSync(path.join(to, "projects")), path.join(from, "projects"));
+  assert.equal(fs.readlinkSync(path.join(to, "history.jsonl")), path.join(from, "history.jsonl"));
+  const kept = fs.readdirSync(to).filter((n) => n.startsWith("projects.before-sharing-"));
+  assert.equal(kept.length, 1);
+  assert.equal(fs.readFileSync(path.join(to, kept[0], "old.txt"), "utf8"), "keep me");
+  // Running it again changes nothing.
+  assert.match(linkHistory(from, to).join("\n"), /already shared/);
+  fs.rmSync(base, { recursive: true, force: true });
+});
