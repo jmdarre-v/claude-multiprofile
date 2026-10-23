@@ -3,7 +3,7 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
-## Unreleased
+## 0.1.38 (2026-10-23)
 
 ### Documentation
 
