@@ -3,6 +3,20 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## Unreleased
+
+### Added
+
+- **`switch [NAME] [--all|--session]`** chooses the Claude Code profile. Asks whether it applies to every terminal (saved) or to this session only, unless a flag says which. Asks for the profile unless NAME is given.
+- **`set-default [NAME]`** is the same as `switch --all`.
+- **`current`** prints the profile in use.
+- **`claude --profile NAME`** (or `--profile=NAME`) in the `claude` wrapper runs one start with that profile, e.g. `claude --profile work --resume`.
+- **`shell-init [fish|bash|zsh] [--install]`** prints the `claude` wrapper. `--install` writes it: fish gets `~/.config/fish/functions/claude.fish` (loaded on first use); bash and zsh get a marked block in the rc file. An older block is replaced.
+- **`install-shim` / `remove-shim`** put a `claude` shim at `~/.local/bin/claude`, so scripts, cron jobs and IDE terminals use the profile in use. `remove-shim` restores the original link.
+- **Chat history sharing** when adding a Claude Code profile: links `projects/` and `history.jsonl` to an existing profile or `default`. An existing copy is moved aside as `*.before-sharing-<time>`, never deleted.
+- **`resolve-dir [NAME]`** (used by the wrapper and the shim) prints the config folder for a profile. Without NAME it keeps a `CLAUDE_CONFIG_DIR` that is already set, so each profile's own command (`claude-work`) opens that profile rather than the one chosen with `switch`.
+- Menu entries and help text for the new commands.
+
 ## 0.1.37 (2026-10-20)
 
 ### Changed

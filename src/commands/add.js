@@ -12,6 +12,7 @@
 //   3. Confirmation, execution, and printed next steps
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { input, select, confirm } from "@inquirer/prompts";
@@ -60,6 +61,7 @@ import {
 } from "../code.js";
 import { detectShell, rcPathForShell } from "../shell.js";
 import { COLORS } from "../appclone.js";
+import { linkHistory } from "../history.js";
 
 const LSREGISTER =
   "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
@@ -242,6 +244,7 @@ export async function add() {
   let codeConfig = null;
   if (wantsCode) {
     codeConfig = await askCodeQuestions(name);
+    if (codeConfig) codeConfig.shareHistoryFrom = await askShareHistory(name);
     // The user declined to claim an existing folder. If Code was the only
     // target there's nothing left to do; otherwise carry on with Desktop.
     if (!codeConfig && !desktopConfig) {
@@ -281,6 +284,9 @@ export async function add() {
   }
   if (codeConfig) {
     codeResult = setupCode(codeConfig);
+    if (codeConfig.shareHistoryFrom && codeResult) {
+      for (const line of linkHistory(codeConfig.shareHistoryFrom, codeResult.configDir)) info(line);
+    }
   }
 
   // ---- Persist to registry -------------------------------------------
@@ -756,6 +762,23 @@ async function askDesktopQuestions(name) {
 // ===========================================================================
 // Claude Code wizard questions
 // ===========================================================================
+
+// Asks whether this profile shares chat history with an existing Claude Code profile.
+// Returns the folder to share with, or null to keep the history separate.
+async function askShareHistory(name) {
+  const sources = [{ name: "default", configDir: path.join(os.homedir(), ".claude") }];
+  for (const p of getRegistry().profiles) {
+    if (p.name !== name && p.code?.configDir) sources.push({ name: p.name, configDir: p.code.configDir });
+  }
+  const choice = await select({
+    message: `Share chat history for "${name}" with another profile?`,
+    choices: [
+      { name: "No, keep this profile's history separate", value: null },
+      ...sources.map((s) => ({ name: `Yes, share with ${s.name} (${s.configDir})`, value: s.configDir })),
+    ],
+  });
+  return choice;
+}
 
 async function askCodeQuestions(name) {
   step("Claude Code configuration");

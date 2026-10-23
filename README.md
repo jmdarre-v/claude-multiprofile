@@ -28,6 +28,60 @@ Terminal:  claude        claude-work        claude-client
 
 > **Disclaimer.** This is an unofficial community tool. It uses public Electron flags (`--user-data-dir`) and a stable but undocumented Claude Code environment variable (`CLAUDE_CONFIG_DIR`) to keep profiles isolated. Anthropic engineers have engaged on the open feature requests for native multi-account in both apps, so the approach is well known, but it is not officially supported. If a future Claude release changes how profiles work, this tool will need to catch up.
 
+## Choose the profile Claude Code uses
+
+`claude-multiprofile switch` chooses the profile. It asks for the scope unless you pass a flag:
+
+```sh
+claude-multiprofile switch                # asks: all terminals, or this session only; then the profile
+claude-multiprofile switch work --all     # every terminal, from now on (saved)
+claude-multiprofile switch work --session # this terminal only (needs the wrapper, see below)
+claude-multiprofile set-default work      # same as switch --all
+claude-multiprofile current               # show the profile in use
+```
+
+`default` is your normal `~/.claude` account; any other name is a profile added with `add`
+(its Claude Code folder is `~/.claude-NAME` unless you chose another). The choice is saved in
+`~/.config/claude-multiprofile/default`.
+
+### The claude wrapper
+
+`claude-multiprofile shell-init fish --install` (or `bash` / `zsh`) adds a `claude` function to your shell
+config, in its own marked block. It also adds `claude-multiprofile switch --session` for the current shell.
+Run it once; running it again replaces the block. Without `--install` it prints the wrapper.
+
+### Run one command with another profile
+
+The wrapper accepts `--profile NAME` (or `--profile=NAME`) and uses that profile for this run only:
+
+```sh
+claude --profile work --resume
+claude --profile=default
+```
+
+`CLAUDE_CONFIG_DIR=~/.claude-work claude` does the same, with or without the wrapper and the shim: a
+`CLAUDE_CONFIG_DIR` that is already set wins over the saved profile, which is how each profile's own command
+(`claude-work`) opens that profile. `--profile NAME` wins over both.
+
+### Make every claude start use the profile
+
+The wrapper only helps interactive shells that load your config. For scripts, cron jobs and IDE terminals:
+
+```sh
+claude-multiprofile install-shim   # replaces ~/.local/bin/claude with a shim that sets the profile's folder
+claude-multiprofile remove-shim    # puts the original link back
+```
+
+The shim runs the real Claude binary that the link pointed to. If Claude's own updates replace the link,
+run `install-shim` again. If you move this tool's folder, run it again too.
+
+## Share chat history between profiles
+
+When you `add` a Claude Code profile, the wizard asks whether to share its chat history with an existing
+profile (or `default`, your normal `~/.claude`). Sharing links the `projects` folder and `history.jsonl`
+to that profile, so both see the same sessions. The source keeps its files. If the new profile already had
+a history folder, it is moved aside as `projects.before-sharing-<time>`, not deleted.
+
 ## Why this exists
 
 Claude Desktop and Claude Code both assume a single signed-in account. There's no built-in profile switcher today (open feature requests: [Desktop](https://github.com/anthropics/claude-code/issues/32783), [Desktop UI](https://github.com/anthropics/claude-code/issues/18435)). The standard workaround is a manual setup:
@@ -302,6 +356,27 @@ Upgrades to the latest version on npm and applies its changes to your profiles, 
 It installs the exact version it found (not `@latest`, which npm can answer from a stale cache in the minutes after a release) and then checks what actually landed. If npm installed an older version, it says so and asks you to retry in a minute. If the new version landed in a different Node version's folder than the one your shell uses (common with nvm), it says that instead, and applies nothing until PATH is sorted. When everything checks out, it runs the new version's `doctor --fix`, so launchers, the launch helper and profile settings are brought up to date. `--no-fix` stops after the install.
 
 If you are already on the latest version but its changes were never applied (for example, you upgraded with plain `npm install -g`), `upgrade` applies them.
+
+### `claude-multiprofile switch [NAME] [--all|--session]`
+
+Chooses the profile Claude Code uses. Asks the scope and the profile when they are left out. `--all` saves
+the choice for every terminal; `--session` applies it to the current shell (needs the wrapper).
+
+### `claude-multiprofile set-default [NAME]`
+
+Same as `switch --all`.
+
+### `claude-multiprofile current`
+
+Prints the profile in use.
+
+### `claude-multiprofile shell-init [SHELL] [--install]`
+
+Prints the `claude` wrapper for `fish`, `bash` or `zsh`; `--install` writes it into your shell config.
+
+### `claude-multiprofile install-shim` / `remove-shim`
+
+Installs or removes the `claude` shim at `~/.local/bin/claude`. See "Make every claude start use the profile".
 
 ### `claude-multiprofile help` / `--version`
 
