@@ -313,18 +313,28 @@ This is the part most guides skip and most users get burned by.
 
 ### Desktop: signing in for the first time
 
-Some of Claude Desktop's sign-in methods finish in your browser, which hands the result back through a `claude://` link. macOS delivers that link to a running Claude, and it cannot tell a profile's copy from your main Claude: they share a bundle ID. If the main Claude is open, the link can reach it instead of the profile, and the sign-in never completes ([#24](https://github.com/jmdarre-v/claude-multiprofile/issues/24)).
+The recommended way is to sign in with the code from an email. Your main Claude can stay open:
+
+1. Double-click the new launcher (or run `open ~/Applications/Claude\ WORK.app`).
+2. In the profile's window, choose **Continue with email** and enter the address for this profile's account.
+3. Type the code from the email into the profile's window. Don't click the sign-in link in that email.
+
+The code goes straight into the window that asked for it, so nothing passes through a `claude://` link. The link in the email is different: it comes back through `claude://`, like the browser sign-ins below, so it can reach your main Claude instead. What the main Claude does with it hasn't been tested, so type the code.
+
+This was tested with the main Claude open, on Claude Desktop 2.42304.0 and 2.42304.2 on macOS 26.6 ([#24](https://github.com/jmdarre-v/claude-multiprofile/issues/24#issuecomment-6262402559)). The profile signed in to its own account, the main Claude stayed on its account, and both were still signed in to their own accounts after a restart.
+
+**Signing in with Google still needs every other Claude window quit first.** Some of Claude Desktop's sign-in methods finish in your browser, which hands the result back through a `claude://` link. macOS delivers that link to a running Claude, and it cannot tell a profile's copy from your main Claude: they share a bundle ID. If the main Claude is open, the link can reach it instead of the profile, and the sign-in never completes ([#24](https://github.com/jmdarre-v/claude-multiprofile/issues/24)).
 
 "Sign in with Google" is currently always one of these. Claude uses Apple's in-app sign-in sheet unless it believes it is the app that handles `claude://` links, and it decides that by bundle ID, so a profile's copy always believes it and goes through the browser.
 
-So, for the first sign-in:
+So, to sign in with Google or any other way that finishes in your browser:
 
 1. Quit any other Claude window with **Cmd+Q** before doing the very first launch of the new profile.
 2. Double-click the new launcher (or run `open ~/Applications/Claude\ WORK.app`).
 3. Sign in with the account for this profile.
 4. Quit (Cmd+Q) once you've confirmed it logged in correctly.
 
-From that point on, both profiles can run simultaneously. The auth token is stored in the per-profile data folder and won't get re-routed.
+Either way, from that point on, both profiles can run simultaneously. The auth token is stored in the per-profile data folder and won't get re-routed.
 
 ### Code: signing in for the first time
 
@@ -384,7 +394,7 @@ You launched it while the other Claude instance was running. The `claude://` aut
 rm -rf ~/Library/Application\ Support/Claude-WORK
 ```
 
-Then quit ALL Claude windows (Cmd+Q) and launch the new profile again. It'll start fresh and you can sign in cleanly.
+Then quit ALL Claude windows (Cmd+Q) and launch the new profile again. It'll start fresh and you can sign in cleanly. If you sign in with the email code (see [Desktop: signing in for the first time](#desktop-signing-in-for-the-first-time)), you only need to quit the new profile, and your other Claude can stay open.
 
 **The launcher icon stopped responding to double-clicks but `open` from terminal still works.**
 
