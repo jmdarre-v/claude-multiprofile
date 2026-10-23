@@ -3,6 +3,18 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## Unreleased
+
+### Documentation
+
+- **The README's first sign-in section now starts with the email code**
+  (#24, by @hirorylabo in #25), the same advice `add` now gives, and says how it was tested:
+  Claude Desktop 2.42304.0 and 2.42304.2 on macOS 26.6, with the main
+  Claude open. Google sign-in keeps its steps there: quit every other Claude
+  window first. The troubleshooting entry for a profile that opened in your
+  other account now says that with the email code, you only need to quit
+  the new profile.
+
 ## 0.1.37 (2026-10-20)
 
 ### Changed
@@ -15,16 +27,6 @@ project is pre-1.0, so minor breakage may occur between 0.x releases.
   email, which does go through `claude://`. The end of `add` now says this
   first, and keeps "quit every other Claude window" for Google and other
   sign-ins that finish in the browser.
-
-### Documentation
-
-- **The README's first sign-in section now starts with the email code**
-  (#24), the same advice `add` now gives, and says how it was tested:
-  Claude Desktop 2.42304.0 and 2.42304.2 on macOS 26.6, with the main
-  Claude open. Google sign-in keeps its steps there: quit every other Claude
-  window first. The troubleshooting entry for a profile that opened in your
-  other account now says that with the email code, you only need to quit
-  the new profile.
 
 ### Not merged
 
