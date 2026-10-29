@@ -187,7 +187,10 @@ export function printLaunchHints(profile) {
     lines.push([profile.code.aliasName, "Claude Code, in a terminal"]);
   }
   if (profile.desktop && profile.desktop.appPath) {
-    lines.push([`open "${tildify(profile.desktop.appPath)}"`, "Claude Desktop"]);
+    // NOTE: do NOT tildify here. A quoted "~" does not expand in zsh/bash,
+    // so `open "~/Applications/..."` fails with "file .../~/Applications/...
+    // does not exist". The absolute path in double quotes always pastes cleanly.
+    lines.push([`open "${profile.desktop.appPath}"`, "Claude Desktop"]);
   }
   if (lines.length === 0) return;
 

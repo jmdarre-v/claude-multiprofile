@@ -166,7 +166,7 @@ Claude from the Dock for the original account, and your new launcher
 for this one.
 
 ℹ First-launch command (only needed if you didn't drag the .app yet):
-  open "~/Applications/Claude WORK.app"
+  open "/Users/you/Applications/Claude WORK.app"
 
 To keep it in your Dock, drag the launcher itself from ~/Applications.
 
@@ -213,7 +213,7 @@ $ claude-multiprofile list
     Created:         2026-09-27
     To launch:
       claude-work  (Claude Code, in a terminal)
-      open "~/Applications/Claude WORK.app"  (Claude Desktop)
+      open "/Users/you/Applications/Claude WORK.app"  (Claude Desktop)
 
 ℹ Registry file: ~/.config/claude-multiprofile/profiles.json
 ```
@@ -232,7 +232,7 @@ $ claude-multiprofile status
 ✓     All checks passed.
     To launch:
       claude-work  (Claude Code, in a terminal)
-      open "~/Applications/Claude WORK.app"  (Claude Desktop)
+      open "/Users/you/Applications/Claude WORK.app"  (Claude Desktop)
 
 ℹ Registry: ~/.config/claude-multiprofile/profiles.json
 ℹ Shell: zsh (~/.zshrc)
