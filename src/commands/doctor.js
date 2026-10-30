@@ -288,7 +288,9 @@ function suggestPostinstall(dir, pkg) {
   if (post) {
     // Re-running the package's own postinstall is the least destructive fix
     // and usually the exact step that did not finish.
-    info(`    Re-run its install step: ${command(`cd "${tildify(dir)}" && ${post}`)}`);
+    // NOTE: absolute path, not tildified. A quoted "~" does not expand in
+    // zsh/bash, so cd "~/..." would fail.
+    info(`    Re-run its install step: ${command(`cd "${dir}" && ${post}`)}`);
   }
   info(`    Or reinstall: ${command(`npm install -g ${pkg.name || path.basename(dir)}@latest --force`)}`);
 }
@@ -1381,7 +1383,9 @@ function checkGhIsolation(t, reg, fix) {
     } else {
       warn(`${p.name}: gh config folder is missing (${tildify(p.code.ghConfigDir)}).`);
       info("  gh will fall back to your default login for this profile.");
-      info(`  Recreate it with ${command(`mkdir -p "${tildify(p.code.ghConfigDir)}"`)} then sign in with ${command("gh auth login")}.`);
+      // NOTE: mkdir arg uses the absolute path, not tildified. A quoted "~"
+      // does not expand in zsh/bash. The warn line above keeps ~/ for display.
+      info(`  Recreate it with ${command(`mkdir -p "${p.code.ghConfigDir}"`)} then sign in with ${command("gh auth login")}.`);
       t.warnings++;
     }
   }

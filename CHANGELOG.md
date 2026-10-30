@@ -3,6 +3,17 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## Unreleased
+
+### Fixed
+
+- **Commands the tool prints now carry absolute paths, not a quoted `~`.**
+  A tilde expands only when it is unquoted, so `open "~/Applications/Claude
+  WORK.app"` and `GH_CONFIG_DIR="~/.claude-work/gh" gh auth login` looked for
+  a folder literally named `~`. The launch hints, the GitHub CLI sign-in line
+  and doctor's repair suggestions now print the absolute path. Paths shown for
+  reading keep the shorter `~/` form.
+
 ## 0.1.38 (2026-10-23)
 
 ### Documentation

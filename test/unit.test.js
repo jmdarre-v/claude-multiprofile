@@ -2300,3 +2300,42 @@ test("withoutClaudePrefix: a name that would double the Claude the tool adds (#2
   assert.equal(withoutClaudePrefix("claudette"), null, "only the word itself");
   assert.equal(withoutClaudePrefix("work"), null);
 });
+
+// ---------------------------------------------------------------------------
+// Paths in commands the user pastes: a quoted ~ does not expand
+// ---------------------------------------------------------------------------
+
+test("printLaunchHints: the Desktop command pastes without a quoted tilde", async (t) => {
+  const { printLaunchHints } = await import("../src/util.js");
+  const appPath = path.join(os.homedir(), "Applications", "Claude WORK.app");
+  const lines = [];
+  const real = console.log;
+  console.log = (s) => lines.push(String(s));
+  t.after(() => { console.log = real; });
+
+  printLaunchHints({ name: "work", code: null, desktop: { appPath } });
+  const out = lines.join("\n");
+
+  assert.ok(out.includes(`open "${appPath}"`), "the absolute path is what gets pasted");
+  assert.ok(!out.includes('"~/'), "zsh and bash expand ~ only when it is unquoted");
+});
+
+test("no emitted shell command quotes a tildified path", () => {
+  // `open "~/Applications/X.app"` looks for a folder literally named "~",
+  // because the shell expands a tilde only when it is unquoted. Every path
+  // that goes into a command the user is told to paste stays absolute.
+  const src = path.join(path.dirname(new URL(import.meta.url).pathname), "..", "src");
+  const offenders = [];
+  const scan = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const file = path.join(dir, entry.name);
+      if (entry.isDirectory()) { scan(file); continue; }
+      if (!file.endsWith(".js")) continue;
+      fs.readFileSync(file, "utf8").split("\n").forEach((line, i) => {
+        if (/["']\$\{tildify\(/.test(line)) offenders.push(`${path.relative(src, file)}:${i + 1}`);
+      });
+    }
+  };
+  scan(src);
+  assert.deepEqual(offenders, []);
+});

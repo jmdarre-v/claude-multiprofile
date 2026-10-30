@@ -428,7 +428,9 @@ async function enableGhForProfile(profile) {
   ok(`"${profile.name}" now has its own GitHub CLI config.`);
   console.log("");
   info("Sign in for this profile (run this once, from anywhere):");
-  console.log("  " + command(`GH_CONFIG_DIR="${tildify(ghConfigDir)}" gh auth login`));
+  // NOTE: absolute path, not tildified. A quoted "~" does not expand in
+  // zsh/bash, so GH_CONFIG_DIR="~/..." would point at a literal "~" folder.
+  console.log("  " + command(`GH_CONFIG_DIR="${ghConfigDir}" gh auth login`));
   console.log("");
   info("Then reload your shell so the updated alias takes effect:");
   console.log("  " + command(`source ${tildify(rcPath)}`));
