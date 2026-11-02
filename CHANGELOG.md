@@ -7,7 +7,8 @@ project is pre-1.0, so minor breakage may occur between 0.x releases.
 
 ### Fixed
 
-- **Commands the tool prints now carry absolute paths, not a quoted `~`.**
+- **Commands the tool prints now carry absolute paths, not a quoted `~`**
+  (by @danielagbo888-png in #31).
   A tilde expands only when it is unquoted, so `open "~/Applications/Claude
   WORK.app"` and `GH_CONFIG_DIR="~/.claude-work/gh" gh auth login` looked for
   a folder literally named `~`. The launch hints, the GitHub CLI sign-in line
