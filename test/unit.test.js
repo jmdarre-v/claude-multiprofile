@@ -2339,3 +2339,58 @@ test("no emitted shell command quotes a tildified path", () => {
   scan(src);
   assert.deepEqual(offenders, []);
 });
+
+// #32: `add` built the Desktop launcher without GH_CONFIG_DIR, because the
+// launcher is built before setupCode decides the GitHub CLI folder.
+
+test("launcherDirsFor: a new Code half with its own gh login hands GH_CONFIG_DIR to the launcher (#32)", async () => {
+  const { launcherDirsFor } = await import("../src/commands/add.js");
+  const { defaultGhConfigDirFor } = await import("../src/code.js");
+  const cfg = path.join(os.tmpdir(), ".claude-work");
+  // Answers for a Code half about to be created.
+  assert.deepEqual(launcherDirsFor({ configDir: cfg, isolateGh: true }), {
+    codeConfigDir: cfg,
+    ghConfigDir: defaultGhConfigDirFor(cfg),
+  });
+  assert.deepEqual(launcherDirsFor({ configDir: cfg, isolateGh: false }), { codeConfigDir: cfg, ghConfigDir: undefined });
+  // A registry entry that already exists keeps the folder it recorded.
+  assert.deepEqual(launcherDirsFor({ configDir: cfg, ghConfigDir: "/x/gh" }), { codeConfigDir: cfg, ghConfigDir: "/x/gh" });
+  assert.deepEqual(launcherDirsFor({ configDir: cfg, ghConfigDir: null }), { codeConfigDir: cfg, ghConfigDir: undefined });
+  // No Code half: the launcher exports neither.
+  assert.deepEqual(launcherDirsFor(null), { codeConfigDir: undefined, ghConfigDir: undefined });
+  assert.deepEqual(launcherDirsFor(undefined), { codeConfigDir: undefined, ghConfigDir: undefined });
+});
+
+test("launcherDirsFor: a launcher built from it exports what doctor checks for (#32)", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("osacompile is macOS only");
+    return;
+  }
+  const { launcherDirsFor } = await import("../src/commands/add.js");
+  const { compileApp, launcherCodeConfigDir, launcherGhConfigDir } = await import("../src/desktop.js");
+  const { defaultGhConfigDirFor } = await import("../src/code.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-gh-launcher-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const cfg = path.join(root, ".claude-work");
+  const appPath = path.join(root, "Claude WORK.app");
+  compileApp({
+    name: "work",
+    dataDir: path.join(root, "data"),
+    appPath,
+    claudeAppPath: "/Applications/Claude.app", // only embedded, not resolved
+    ...launcherDirsFor({ configDir: cfg, isolateGh: true }),
+  });
+  assert.equal(launcherCodeConfigDir(appPath), cfg);
+  // The same comparison doctor's GitHub CLI check makes against the registry,
+  // where setupCode records defaultGhConfigDirFor(configDir).
+  assert.equal(launcherGhConfigDir(appPath), defaultGhConfigDirFor(cfg));
+});
+
+test("add: both places that build a new Desktop launcher pass the Code half through launcherDirsFor (#32)", () => {
+  const src = fs.readFileSync(path.resolve("src/commands/add.js"), "utf8");
+  const calls = src.split("setupDesktop({").slice(1).map((rest) => rest.slice(0, rest.indexOf("});")));
+  assert.equal(calls.length, 2, "add builds a new launcher in two places");
+  for (const body of calls) {
+    assert.match(body, /\.\.\.launcherDirsFor\(/, "each passes both folders, not only the Code config dir");
+  }
+});

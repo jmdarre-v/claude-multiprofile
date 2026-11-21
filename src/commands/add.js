@@ -94,6 +94,20 @@ export function withoutClaudePrefix(name) {
   return m ? m[1] : null;
 }
 
+// What a Desktop launcher must export for a profile's Code half: its config
+// folder, and its own GitHub CLI folder when it has one. `code` is either the
+// answers for a Code half about to be created ({ configDir, isolateGh }) or a
+// registry entry that already exists ({ configDir, ghConfigDir }). The launcher
+// is built before setupCode runs for a new profile, so the GitHub CLI folder
+// is worked out here rather than read from setupCode's result; leaving it out
+// built launchers without GH_CONFIG_DIR, so Claude Code opened from the Desktop
+// app used the default gh account until doctor --fix (#32).
+export function launcherDirsFor(code) {
+  if (!code) return { codeConfigDir: undefined, ghConfigDir: undefined };
+  const ghConfigDir = code.ghConfigDir || (code.isolateGh ? defaultGhConfigDirFor(code.configDir) : undefined);
+  return { codeConfigDir: code.configDir, ghConfigDir: ghConfigDir || undefined };
+}
+
 // A complete profile can still gain something: its own GitHub CLI login, if
 // gh is installed and the profile has a Code half that is not isolated yet.
 export function canEnableGh(profile, ghAvailable = hasGhCli()) {
@@ -267,8 +281,9 @@ export async function add() {
   let codeResult = null;
 
   if (desktopConfig) {
-    // Hand the Code config dir to the Desktop launcher so it can export
-    // CLAUDE_CONFIG_DIR. Without this, Claude Code sessions started from
+    // Hand the Code config dir (and the profile's own GitHub CLI folder, if
+    // it gets one) to the Desktop launcher so it can export CLAUDE_CONFIG_DIR
+    // and GH_CONFIG_DIR. Without this, Claude Code sessions started from
     // inside Claude Desktop fall back to ~/.claude in every profile, and
     // CLAUDE.md / settings.json / per-project memory merge across profiles
     // even though Desktop itself is cleanly isolated.
@@ -276,7 +291,7 @@ export async function add() {
     // omits --env and behaves exactly as it did before.
     desktopResult = setupDesktop({
       ...desktopConfig,
-      codeConfigDir: codeConfig?.configDir,
+      ...launcherDirsFor(codeConfig),
     });
   }
   if (codeConfig) {
@@ -529,7 +544,7 @@ async function linkExisting(profile, missing) {
     // there or we just created it.
     const desktopResult = setupDesktop({
       ...desktopConfig,
-      codeConfigDir: next.code ? next.code.configDir : undefined,
+      ...launcherDirsFor(next.code),
     });
     next.desktop = {
       dataDir: desktopResult.dataDir,
