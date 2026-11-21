@@ -3,6 +3,23 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## 0.1.40 (2026-11-21)
+
+### Fixed
+
+- **A new profile with its own GitHub CLI login got a Desktop launcher
+  without it.** Reported by @ariel-jarosz in #32, with the cause. `add`
+  builds the Desktop launcher before it sets up the Code half, where the
+  GitHub CLI folder is decided, and never passed that folder to the
+  launcher. The shell alias exported `GH_CONFIG_DIR`, but Claude Code opened
+  from the Desktop app used your default GitHub account until `doctor --fix`
+  rebuilt the launcher. Adding the Desktop half to an existing Code profile
+  had the same gap. Both now pass the folder, so a new launcher exports it
+  from the start.
+
+  Profiles created before this are fixed by `doctor --fix`, which `upgrade`
+  runs for you.
+
 ## 0.1.39 (2026-11-02)
 
 ### Fixed
