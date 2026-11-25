@@ -45,6 +45,8 @@ import {
   launcherWaitsForHelper,
   copyClaudeIcon,
   findClaudeApp,
+  refreshLauncher,
+  LSREGISTER,
   DEFAULT_APPLET_BUNDLE_ID,
   DEFAULT_DESKTOP_CONFIG_FILE,
   desktopConfigFile,
@@ -460,25 +462,7 @@ function checkProfiles(t, reg) {
 // launchers as the same app and Dock double-clicks stop resolving. Profiles
 // created before v0.1.9 still carry the default ID unless `repair` was run.
 // This check finds them; --fix restamps and re-registers on the spot.
-
-const LSREGISTER =
-  "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
-
-// After changing anything inside a launcher bundle, tell the system about it.
-// Finder and the Dock cache an app's icon against the bundle, so a rewritten
-// Info.plist with an unchanged bundle mtime shows up as a stale or blank tile.
-function refreshLauncher(appPath) {
-  try {
-    execFileSync("/usr/bin/touch", [appPath]);
-  } catch {
-    // Non-fatal.
-  }
-  try {
-    execFileSync(LSREGISTER, ["-f", appPath], { stdio: "pipe" });
-  } catch {
-    // Non-fatal; registration catches up on its own.
-  }
-}
+// refreshLauncher and LSREGISTER live in desktop.js, shared with `color`.
 
 // ---- Check: launcher names ---------------------------------------------------
 //

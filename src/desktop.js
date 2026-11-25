@@ -583,6 +583,26 @@ export function stripQuarantine(appPath) {
   }
 }
 
+export const LSREGISTER =
+  "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+
+// After changing anything inside an app bundle (a launcher or a profile's
+// copy), tell the system about it. Finder and the Dock cache an app's icon
+// against the bundle, so a change with an unchanged bundle mtime shows up as
+// a stale or blank tile.
+export function refreshLauncher(appPath) {
+  try {
+    execFileSync("/usr/bin/touch", [appPath]);
+  } catch {
+    // Non-fatal.
+  }
+  try {
+    execFileSync(LSREGISTER, ["-f", appPath], { stdio: "pipe" });
+  } catch {
+    // Non-fatal; registration catches up on its own.
+  }
+}
+
 // Whether any running Claude is using this data folder. Catches a profile
 // open through its own copy AND one opened on the shared Claude.app (profiles
 // created before v0.1.23 launch that way).

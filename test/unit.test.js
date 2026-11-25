@@ -2394,3 +2394,107 @@ test("add: both places that build a new Desktop launcher pass the Code half thro
     assert.match(body, /\.\.\.launcherDirsFor\(/, "each passes both folders, not only the Code config dir");
   }
 });
+
+// ---- color command ----------------------------------------------------------
+
+test("color: parseColor accepts none and the eight colours, nothing else", async () => {
+  const { parseColor, COLOR_NAMES } = await import("../src/commands/color.js");
+  assert.equal(parseColor("none"), null);
+  assert.equal(parseColor("blue"), "blue");
+  assert.equal(parseColor(" Teal "), "teal", "case and spaces are forgiven");
+  assert.equal(parseColor("grey"), undefined);
+  assert.equal(parseColor(""), undefined);
+  assert.equal(parseColor("toString"), undefined, "not fooled by Object.prototype");
+  assert.deepEqual(COLOR_NAMES, ["none", "orange", "red", "yellow", "green", "teal", "blue", "purple", "pink"]);
+});
+
+test("color: withColor changes desktop.color and nothing else", async () => {
+  const { withColor } = await import("../src/commands/color.js");
+  const p = {
+    name: "work",
+    desktop: { dataDir: "/d", appPath: "/a.app", claudeAppPath: "/C.app", color: "red", selfUpdate: true },
+    code: { configDir: "/c", aliasName: "claude-work", ghConfigDir: "/c/gh" },
+  };
+  const blue = withColor(p, "blue");
+  assert.deepEqual(blue, { ...p, desktop: { ...p.desktop, color: "blue" } });
+  assert.equal(p.desktop.color, "red", "the original is not mutated");
+  assert.equal(withColor(p, null).desktop.color, null);
+});
+
+test("color: the recompiled launcher carries the new hue, and none carries no hue", async () => {
+  const { withColor } = await import("../src/commands/color.js");
+  const { helperSpecFor } = await import("../src/launchhelper.js");
+  const { buildLaunchAppleScript } = await import("../src/desktop.js");
+  const { COLORS } = await import("../src/appclone.js");
+  const p = { name: "work", desktop: { dataDir: "/d", appPath: "/Claude WORK.app", claudeAppPath: "/Applications/Claude.app", color: "red" } };
+  const scriptFor = (color) => {
+    const d = withColor(p, color).desktop;
+    const helper = helperSpecFor({ sourceAppPath: d.claudeAppPath, color: d.color, appPath: d.appPath });
+    return { helper, script: buildLaunchAppleScript(d.dataDir, "/clones/Claude work.app", null, null, true, helper) };
+  };
+  const blue = scriptFor("blue");
+  assert.equal(blue.helper.hue, String(COLORS.blue));
+  assert.ok(blue.script.includes(`'${COLORS.blue}'`), "the hue is passed to the helper");
+  assert.ok(!blue.script.includes(`'${COLORS.red}'`), "the old hue is gone");
+  assert.equal(scriptFor(null).helper.hue, "", "no colour, no re-tint after updates");
+});
+
+test("cli: color and colour both reach the color command", () => {
+  const src = fs.readFileSync(path.resolve("src/cli.js"), "utf8");
+  const handlers = src.slice(src.indexOf("const handlers = {"), src.indexOf("};", src.indexOf("const handlers = {")));
+  assert.match(handlers, /\bcolor\b/);
+  assert.match(handlers, /colour: color/);
+  assert.match(src, /color \[name\] \[colour\]/, "listed in the help");
+});
+
+// A real tint and a real removal, on a bundle carrying an .icns every Mac has,
+// so this runs on CI without Claude.app installed.
+function fakeBundle(root, name) {
+  const app = path.join(root, `${name}.app`);
+  fs.mkdirSync(path.join(app, "Contents", "Resources"), { recursive: true });
+  fs.copyFileSync(
+    "/System/Library/CoreServices/CoreTypes.bundle/Contents/Resources/GenericApplicationIcon.icns",
+    path.join(app, "Contents", "Resources", "icon.icns")
+  );
+  return app;
+}
+
+test("color: applyColor sets a custom icon and removeCustomIcon takes it off again", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("CoreImage and NSWorkspace are macOS only");
+    return;
+  }
+  const { applyColor, removeCustomIcon, hasCustomIcon } = await import("../src/appclone.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-color-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const app = fakeBundle(root, "Tint");
+  assert.equal(hasCustomIcon(app), false);
+  applyColor(app, app, "blue");
+  assert.equal(hasCustomIcon(app), true, "tinted");
+  applyColor(app, app, "green");
+  assert.equal(hasCustomIcon(app), true, "re-tinted over the old colour");
+  removeCustomIcon(app);
+  assert.equal(hasCustomIcon(app), false, "back to the bundle's own icon");
+  assert.equal(fs.existsSync(path.join(app, "Icon\r")), false, "the icon file is gone too");
+  removeCustomIcon(app); // already plain: harmless
+});
+
+test("color: recompiling a tinted launcher in place keeps its bundle and its colour", async (t) => {
+  if (process.platform !== "darwin") {
+    t.skip("osacompile is macOS only");
+    return;
+  }
+  const { compileApp } = await import("../src/desktop.js");
+  const { applyColor, hasCustomIcon } = await import("../src/appclone.js");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "cmp-color-launcher-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const icons = fakeBundle(root, "Icons");
+  const appPath = path.join(root, "Claude WORK.app");
+  const args = { name: "work", dataDir: path.join(root, "data"), appPath, claudeAppPath: "/Applications/Claude.app" };
+  compileApp(args);
+  applyColor(appPath, icons, "blue");
+  const inode = fs.statSync(appPath).ino;
+  compileApp(args);
+  assert.equal(fs.statSync(appPath).ino, inode, "same bundle directory, so the Dock pin survives");
+  assert.equal(hasCustomIcon(appPath), true, "the colour survives the recompile");
+});

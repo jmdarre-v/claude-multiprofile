@@ -16,6 +16,7 @@ import { remove } from "./commands/remove.js";
 import { rename } from "./commands/rename.js";
 import { repair } from "./commands/repair.js";
 import { selfUpdate } from "./commands/selfupdate.js";
+import { color } from "./commands/color.js";
 import { status } from "./commands/status.js";
 import { upgrade } from "./commands/upgrade.js";
 import { err, info, command } from "./util.js";
@@ -56,6 +57,9 @@ COMMANDS
   self-update [name] [on|off]
                          Whether a profile's copy of Claude updates itself
                          (off by default: its launcher keeps it current)
+  color [name] [colour]  Show or change a profile's Dock colour
+                         (none, orange, red, yellow, green, teal, blue,
+                         purple, pink; also spelled colour)
   upgrade [--no-fix]     Upgrade to the latest version on npm, then apply its
                          changes to your profiles (--no-fix: install only)
   help                   Show this help
@@ -94,6 +98,7 @@ async function pickCommand() {
       { name: "repair       Re-register a profile launcher with macOS", value: "repair" },
       { name: "remove       Remove a profile", value: "remove" },
       { name: "self-update  Show or change how each profile updates", value: "self-update" },
+      { name: "color        Show or change a profile's Dock colour", value: "color" },
       { name: "upgrade      Upgrade claude-multiprofile to the latest version", value: "upgrade" },
       { name: "help         Show full help text", value: "help" },
       { name: "exit", value: "exit" },
@@ -155,7 +160,7 @@ export async function run(argv) {
 
   if (argv[0]) remindIfFixesPending(cmd);
 
-  const handlers = { add, list, status, doctor, extensions, rename, repair, remove, upgrade, "self-update": selfUpdate };
+  const handlers = { add, list, status, doctor, extensions, rename, repair, remove, upgrade, "self-update": selfUpdate, color, colour: color };
   const handler = handlers[cmd];
   if (!handler) {
     err(`Unknown command: ${cmd}`);

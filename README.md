@@ -130,6 +130,8 @@ Optional, and off by default. Choosing a colour during `add` gives the profile i
 
 Eight colours are available: orange, red, yellow, green, teal, blue, purple, pink. Claude's own icon is hue-rotated, so it still looks like Claude.
 
+To change or remove a colour later, use [`claude-multiprofile color`](#claude-multiprofile-color-name-colour).
+
 What it costs, stated plainly:
 
 - **Disk: a few megabytes, not a few hundred.** The copy is an APFS clone (`cp -Rc`), so its blocks are shared with the original until one side changes. Measured on an 800MB Claude.app: about 1.5 seconds and 3MB of real disk.
@@ -294,6 +296,19 @@ claude-multiprofile self-update              # every profile's mode
 claude-multiprofile self-update work on      # let Claude update it itself
 claude-multiprofile self-update work off     # back to the default
 ```
+
+### `claude-multiprofile color [name] [colour]`
+
+Shows or changes each Desktop profile's Dock colour after `add`. `none` removes it and brings back the standard icon. The profile's copy of Claude and its launcher both change, and so does the colour the launcher puts back after each Claude update; the launcher is updated in place, so a Dock pin keeps working. Also spelled `colour`.
+
+```bash
+claude-multiprofile color              # every profile's colour
+claude-multiprofile color work         # pick one from a list
+claude-multiprofile color work blue    # set it directly
+claude-multiprofile color work none    # back to the standard icon
+```
+
+A profile that is open keeps its old tile until you quit it and open it again. Any icon you set by hand on the copy or the launcher is replaced. Profiles created before v0.1.23 have no copy of their own until `doctor --fix` builds one.
 
 ### `claude-multiprofile upgrade [--no-fix]`
 

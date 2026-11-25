@@ -137,6 +137,15 @@ function run(argv) {
   return $.NSWorkspace.sharedWorkspace.setIconForFileOptions(img, $(argv[1]), 0) ? 'OK' : 'ERR set-failed';
 }`;
 
+// A nil image removes the custom icon: the Icon\r file and the FinderInfo
+// flag both go. It has to be $() (nil); JavaScript null arrives as NSNull,
+// which AppKit then tries to draw and throws.
+const CLEARICON_JS = `
+ObjC.import('AppKit');
+function run(argv) {
+  return $.NSWorkspace.sharedWorkspace.setIconForFileOptions($(), $(argv[0]), 0) ? 'OK' : 'ERR clear-failed';
+}`;
+
 // Claude ships one .icns in Resources; the exact filename has changed across
 // releases, so take the first rather than hardcoding it.
 export function findAppIcns(appPath) {
@@ -318,6 +327,12 @@ export function applyColor(clonePath, claudeAppPath, color) {
       // Best effort.
     }
   }
+}
+
+// Back to the bundle's own icon. Used when a profile's colour is removed.
+export function removeCustomIcon(appPath) {
+  const r = runJxa(CLEARICON_JS, [appPath]);
+  if (r !== "OK") throw new Error(`Could not remove the icon: ${r}`);
 }
 
 export function removeClone(name) {
