@@ -3,6 +3,20 @@
 All notable changes to claude-multiprofile. Versions follow semver; the
 project is pre-1.0, so minor breakage may occur between 0.x releases.
 
+## 0.1.41 (2026-11-25)
+
+### Added
+
+- **`color`: change or remove a profile's Dock colour after creating it.**
+  Until now the colour could only be picked during `add`. `claude-multiprofile
+  color` lists each Desktop profile's colour, `color work blue` sets one, and
+  `color work none` brings back the standard icon (also spelled `colour`). It
+  re-tints the profile's copy of Claude and its launcher, and recompiles the
+  launcher in place so the colour it restores after a Claude update is the
+  new one; a Dock pin keeps working. Editing the registry by hand and running
+  `doctor --fix` was not enough: doctor saw the old tint as a colour present,
+  and the launcher put the old colour back after the next update.
+
 ## 0.1.40 (2026-11-21)
 
 ### Fixed
